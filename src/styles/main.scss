@@ -1,0 +1,221 @@
+/* src/styles/main.scss */
+:root {
+  /* 使用 dvh (動態視口高度) 自動扣除瀏覽器工具列的高度 */
+  --app-height: 100dvh; 
+
+  /* 黑金奢華配色系統 */
+  --c-bg-dark: #050505;
+  --c-bg-card: #141414;
+  --c-gold-light: #FAD961;
+  --c-gold-dark: #F76B1C;
+  --c-text-main: #ffffff;
+  --c-text-gold: #eebb55;
+  
+  --bg-radial-green: radial-gradient(circle at center, #1a3c28 0%, #05100a 100%);
+  --bg-radial-black: radial-gradient(circle at center, #2b2b2b 0%, #000000 100%);
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-touch-callout: none;
+  /* 防止手機點擊時出現藍色框框 */
+  -webkit-tap-highlight-color: transparent; 
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: var(--app-height); /* 強制使用動態高度 */
+  overflow: hidden; /* 禁止任何捲動 */
+  background: var(--c-bg-dark);
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  touch-action: none; /* 禁止瀏覽器預設滑動行為 */
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+/* --- 橫式強制提示 (層級拉到最高) --- */
+.landscape-warning {
+  display: none; /* 預設隱藏 */
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 120vh; /* 故意設大一點蓋住全螢幕 */
+  background: #000;
+  color: #fff;
+  z-index: 99999; /* 確保蓋過所有東西 */
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  text-align: center;
+  
+  h1 { margin-bottom: 10px; font-size: 24px; }
+  p { color: #888; }
+}
+
+/* 當螢幕是「直式」時，才顯示警告 */
+@media screen and (orientation: portrait) {
+  .landscape-warning {
+    display: flex !important;
+  }
+}
+
+/* --- 通用：黃金按鈕樣式 --- */
+.btn-gold {
+  background: linear-gradient(180deg, var(--c-gold-light) 0%, var(--c-gold-dark) 100%);
+  border: 1px solid #fff;
+  color: #3e2202;
+  font-weight: bold;
+  text-transform: uppercase;
+  box-shadow: 0 4px 15px rgba(247, 107, 28, 0.4);
+  transition: transform 0.1s;
+  
+  &:active {
+    transform: scale(0.95);
+    filter: brightness(0.9);
+  }
+}/* src/styles/main.scss */
+:root {
+  /* 使用 dvh (動態視口高度) 自動扣除瀏覽器工具列的高度 */
+  --app-height: 100dvh; 
+
+  /* 黑金奢華配色系統 */
+  --c-bg-dark: #050505;
+  --c-bg-card: #141414;
+  --c-gold-light: #FAD961;
+  --c-gold-dark: #F76B1C;
+  --c-text-main: #ffffff;
+  --c-text-gold: #eebb55;
+  
+  --bg-radial-green: radial-gradient(circle at center, #1a3c28 0%, #05100a 100%);
+  --bg-radial-black: radial-gradient(circle at center, #2b2b2b 0%, #000000 100%);
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-touch-callout: none;
+  /* 防止手機點擊時出現藍色框框 */
+  -webkit-tap-highlight-color: transparent; 
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: var(--app-height); /* 強制使用動態高度 */
+  overflow: hidden; /* 禁止任何捲動 */
+  background: var(--c-bg-dark);
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  touch-action: none; /* 禁止瀏覽器預設滑動行為 */
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+/* --- 橫式強制提示 (層級拉到最高) --- */
+.landscape-warning {
+  display: none; /* 預設隱藏 */
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 120vh; /* 故意設大一點蓋住全螢幕 */
+  background: #000;
+  color: #fff;
+  z-index: 99999; /* 確保蓋過所有東西 */
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  text-align: center;
+  
+  h1 { margin-bottom: 10px; font-size: 24px; }
+  p { color: #888; }
+}
+
+/* 當螢幕是「直式」時，才顯示警告 */
+@media screen and (orientation: portrait) {
+  .landscape-warning {
+    display: flex !important;
+  }
+}
+
+/* --- 通用：黃金按鈕樣式 --- */
+.btn-gold {
+  background: linear-gradient(180deg, var(--c-gold-light) 0%, var(--c-gold-dark) 100%);
+  border: 1px solid #fff;
+  color: #3e2202;
+  font-weight: bold;
+  text-transform: uppercase;
+  box-shadow: 0 4px 15px rgba(247, 107, 28, 0.4);
+  transition: transform 0.1s;
+  
+  &:active {
+    transform: scale(0.95);
+    filter: brightness(0.9);
+  }
+}
+
+.marquee-container {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  border-bottom: 1px solid #333;
+  overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+  height: 30px;
+  display: flex;
+  align-items: center;
+}
+
+/* 跑馬燈文字動畫 */
+.marquee-text {
+  display: inline-block;
+  color: #ddd;
+  font-size: 0.9rem;
+  padding-left: 100%; /* 從最右邊開始 */
+  animation: scroll-left 15s linear infinite;
+  
+  span {
+    color: var(--c-gold-light);
+    font-weight: bold;
+    margin: 0 5px;
+  }
+}
+
+@keyframes scroll-left {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+
+/* 懸浮客服按鈕 */
+.fab-service {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #333, #000);
+  border: 1px solid var(--c-gold-dark);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 1.5rem;
+  cursor: pointer;
+  z-index: 50;
+  transition: transform 0.2s;
+  
+  &:active {
+    transform: scale(0.9);
+  }
+}
