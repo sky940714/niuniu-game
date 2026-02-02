@@ -1,52 +1,70 @@
 import { create } from 'zustand';
 
-const useGameStore = create((set) => ({
-  // === 狀態變數 (State) ===
-  // 當前頁面: 'login' | 'lobby' | 'room'
+const useGameStore = create((set, get) => ({
+  // --- 狀態變數 ---
   currentPage: 'login',
-  
-  // 玩家選擇的房間等級
-  selectedRoom: null, 
-
-  // 用戶資料 (暫存)
+  selectedRoom: null,
   user: null,
 
-  // === 動作函式 (Actions) ===
-
-  // 1. 🔥 設定當前頁面 (這是您剛剛報錯缺少的函式)
+  // --- 動作函式 ---
   setCurrentPage: (page) => set({ currentPage: page }),
 
-  // 2. 登入：設定預設名稱與餘額，並跳轉到大廳
-  login: (username) => set({ 
-    user: { name: username, balance: 10000 },
+  login: (username, balance) => set({ 
+    user: { name: username, balance: balance || 10000 },
     currentPage: 'lobby' 
   }),
 
-  // 3. 進入房間：紀錄房號並跳轉
-  enterRoom: (roomLevel) => set({ 
-    currentPage: 'room', 
-    selectedRoom: roomLevel 
-  }),
+  reLogin: (userData) => {
+    console.log("🔄 執行 reLogin 恢復狀態:", userData);
+    set({
+      user: { 
+        name: userData.username, 
+        balance: userData.balance,
+        referral_code: userData.referral_code 
+      },
+      currentPage: 'lobby'
+    });
+  },
 
-  // 4. 退出房間：回到大廳，清空房號
-  exitRoom: () => set({ 
-    currentPage: 'lobby', 
-    selectedRoom: null 
-  }),
+  logout: () => {
+    console.log("🚫 執行登出");
+    localStorage.removeItem('prestige_token');
+    set({ currentPage: 'login', user: null, selectedRoom: null });
+  },
 
-  // 5. 更新餘額：傳入正數加錢，負數扣錢 (比直接 setState 更安全)
-  updateBalance: (amount) => set((state) => ({
-    user: { 
-      ...state.user, 
-      balance: state.user.balance + amount 
+  // --- 房間控制 (優化重點) ---
+  enterRoom: (roomLevel) => {
+    const { user } = get();
+    // 🛡️ 安全檢查：如果進入房間時發現沒有 user 資料，強制阻斷
+    if (!user) {
+      console.error("❌ 進入房間失敗：找不到使用者資料");
+      set({ currentPage: 'login' });
+      return;
     }
-  })),
 
-  // 6. 登出：清空使用者資料，回到登入頁
-  logout: () => set({ 
-    currentPage: 'login', 
-    user: null,
-    selectedRoom: null 
+    console.log(`🚪 進入房間: ${roomLevel} (玩家: ${user.name})`);
+    set({ 
+      currentPage: 'room', 
+      selectedRoom: roomLevel 
+    });
+  },
+
+  exitRoom: () => {
+    set({ 
+      currentPage: 'lobby', 
+      selectedRoom: null 
+    });
+  },
+
+  updateBalance: (amount) => set((state) => {
+    if (!state.user) return state; // 保持原樣，不回傳空物件
+    
+    return {
+      user: { 
+        ...state.user, 
+        balance: state.user.balance + amount 
+      }
+    };
   }),
 }));
 

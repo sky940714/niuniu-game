@@ -2,16 +2,17 @@ const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
 const cors = require('cors');
+const mysql = require('mysql2/promise');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-// 👇 引入規則書
 const gameLogic = require('./logic'); 
 
 const app = express();
 app.use(cors());
 
 const server = http.createServer(app);
-
 const io = new Server(server, {
     cors: {
         origin: "*", 
@@ -19,7 +20,18 @@ const io = new Server(server, {
     }
 });
 
-// 定義遊戲階段
+const JWT_SECRET = process.env.JWT_SECRET || 'Prestige_NiuNiu_Secret_2026';
+
+// === 🗄️ MySQL 連線設定 ===
+const pool = mysql.createPool({
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASS || '', 
+    database: process.env.DB_NAME || 'prestige_niu_niu',
+    waitForConnections: true,
+    connectionLimit: 10
+});
+
 const PHASES = {
     BETTING: 'BETTING',     
     DEALING: 'DEALING',     
@@ -27,34 +39,23 @@ const PHASES = {
     RESULT: 'RESULT',       
 };
 
-// 遊戲全域狀態
 let gameState = {
     phase: PHASES.BETTING,
     countdown: 18,     
     roundResult: null, 
 };
 
-// === 💰 玩家資料庫 (暫存在記憶體) ===
-// 結構: { "socket_id": { balance: 10000, bets: {0:0, 1:0, 2:0, 3:0} } }
-let players = {};
-
-// 區域對照表 (前端 ID -> 後端屬性名)
+let players = {}; 
 const ZONE_MAP = { 0: 'tian', 1: 'di', 2: 'xuan', 3: 'huang' };
 
-// === ⏱️ 伺服器心跳 (每秒執行一次) ===
-setInterval(() => {
+// === ⏱️ 伺服器心跳 (邏輯保持不變) ===
+setInterval(async () => {
     gameState.countdown--;
-
-    // 狀態切換邏輯
     if (gameState.countdown <= 0) {
         switch (gameState.phase) {
             case PHASES.BETTING:
-                console.log("🛑 停止下注 -> 開始發牌");
-                
-                // === 🔥 核心邏輯：後端發牌與運算 ===
                 try {
                     const deck = gameLogic.createDeck(); 
-                    
                     const hands = {
                         banker: deck.slice(0, 5),
                         tian:   deck.slice(5, 10),
@@ -62,7 +63,6 @@ setInterval(() => {
                         xuan:   deck.slice(15, 20),
                         huang:  deck.slice(20, 25),
                     };
-
                     const results = {
                         banker: gameLogic.calculateHand(hands.banker),
                         tian:   gameLogic.calculateHand(hands.tian),
@@ -70,21 +70,16 @@ setInterval(() => {
                         xuan:   gameLogic.calculateHand(hands.xuan),
                         huang:  gameLogic.calculateHand(hands.huang),
                     };
-
                     const winners = {
                         tian: gameLogic.isPlayerWin(results.tian, results.banker),
                         di:   gameLogic.isPlayerWin(results.di, results.banker),
                         xuan: gameLogic.isPlayerWin(results.xuan, results.banker),
                         huang: gameLogic.isPlayerWin(results.huang, results.banker),
                     };
-
                     gameState.roundResult = { hands, results, winners };
-                    
                     gameState.phase = PHASES.DEALING;
                     gameState.countdown = 8; 
-
                     io.emit('phase_change', gameState);
-
                 } catch (error) {
                     console.error("發牌邏輯錯誤:", error);
                 }
@@ -101,57 +96,41 @@ setInterval(() => {
                 gameState.countdown = 5;
                 io.emit('phase_change', gameState);
 
-                // === 💰 結算派彩邏輯 (後端算錢) ===
-                console.log("🏆 進行結算派彩...");
-                
-                // 遍歷所有在線玩家
                 for (let socketId in players) {
                     let player = players[socketId];
                     let totalWin = 0;
                     let hasBet = false;
-
-                    // 檢查 4 個區域
                     for (let zoneId = 0; zoneId < 4; zoneId++) {
                         const betAmount = player.bets[zoneId];
                         if (betAmount > 0) {
                             hasBet = true;
-                            const zoneName = ZONE_MAP[zoneId]; // tian, di...
-                            const isWin = gameState.roundResult.winners[zoneName];
-                            
-                            if (isWin) {
-                                // 贏家拿回：本金 + (本金 * 倍率 * 0.95)
+                            const zoneName = ZONE_MAP[zoneId];
+                            if (gameState.roundResult.winners[zoneName]) {
                                 const multiplier = gameState.roundResult.results[zoneName].multiplier;
-                                const profit = betAmount * multiplier * 0.95;
-                                totalWin += (betAmount + profit);
+                                totalWin += (betAmount + (betAmount * multiplier * 0.95));
                             }
-                            // 如果輸了，本金已經在下注時扣除，這裡不需要動作
                         }
                     }
 
-                    // 如果有贏錢，加回餘額
-                    if (totalWin > 0) {
-                        player.balance += Math.floor(totalWin);
-                    }
-
-                    // 🔥 重要：私下告訴這位玩家他的最新餘額
                     if (hasBet) {
+                        player.balance += Math.floor(totalWin);
+                        try {
+                            await pool.execute('UPDATE users SET balance = ? WHERE username = ?', [player.balance, player.username]);
+                        } catch (err) {
+                            console.error("資料庫更新失敗:", err);
+                        }
                         io.to(socketId).emit('update_balance', { 
                             balance: player.balance,
                             winAmount: Math.floor(totalWin) 
                         });
-                        console.log(`玩家 ${socketId} 結算後餘額: ${player.balance}`);
                     }
                 }
                 break;
 
             case PHASES.RESULT:
-                console.log("🔄 新局開始，清空下注");
-                
-                // 清空所有玩家的下注紀錄
                 for (let socketId in players) {
                     players[socketId].bets = {0:0, 1:0, 2:0, 3:0};
                 }
-
                 gameState.phase = PHASES.BETTING;
                 gameState.countdown = 18;
                 gameState.roundResult = null;
@@ -159,67 +138,152 @@ setInterval(() => {
                 break;
         }
     } else {
-        io.emit('time_tick', {
-            phase: gameState.phase,
-            countdown: gameState.countdown
-        });
+        io.emit('time_tick', { phase: gameState.phase, countdown: gameState.countdown });
     }
 }, 1000);
 
-// === 🔌 連線與通訊邏輯 ===
-io.on('connection', (socket) => {
-    console.log(`⚡ 玩家連線: ${socket.id}`);
+// === 🔌 Socket 通訊邏輯 ===
+io.on('connection', async (socket) => {
+    console.log(`⚡ 連線嘗試: ${socket.id}`);
 
-    // 1. 初始化新玩家 (給 10000 分)
-    if (!players[socket.id]) {
-        players[socket.id] = {
-            id: socket.id,
-            balance: 10000, // 初始發財金
-            bets: { 0: 0, 1: 0, 2: 0, 3: 0 }
-        };
+    // --- 🆕 自動驗證 Token (重整自動登入) ---
+    const token = socket.handshake.auth?.token;
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, JWT_SECRET);
+            const [rows] = await pool.execute(
+                'SELECT id, username, balance, referral_code FROM users WHERE id = ?', 
+                [decoded.id]
+            );
+
+            if (rows.length > 0) {
+                const user = rows[0];
+                players[socket.id] = {
+                    db_id: user.id,
+                    username: user.username,
+                    balance: user.balance,
+                    bets: { 0: 0, 1: 0, 2: 0, 3: 0 }
+                };
+                // 成功後直接通知前端進入大廳
+                socket.emit('auth_success', {
+                    username: user.username,
+                    balance: user.balance,
+                    referral_code: user.referral_code
+                });
+                socket.emit('init_state', gameState);
+                console.log(`✨ 玩家 ${user.username} 透過 Token 自動登入成功`);
+            }
+        } catch (err) {
+            console.log("⚠️ Token 驗證失敗或已過期");
+        }
     }
 
-    // 2. 馬上告訴前端：當前狀態 + 你的餘額
-    socket.emit('init_state', gameState);
-    socket.emit('update_balance', { balance: players[socket.id].balance });
+    // --- 1. 註冊邏輯 ---
+    socket.on('register', async (data) => {
+        try {
+            const { username, password, referralCodeInput } = data;
+            const phoneRegex = /^09\d{8}$/;
+            if (!phoneRegex.test(username)) {
+                return socket.emit('register_response', { success: false, message: "手機格式錯誤" });
+            }
 
-    // 3. 監聽：玩家下注
-    socket.on('place_bet', (data) => {
-        // data 格式: { zoneId: 0, amount: 100 }
-        
-        // 安全檢查：非下注時間不能下注
-        if (gameState.phase !== PHASES.BETTING) return;
+            let referrerId = null;
+            if (referralCodeInput) {
+                const [refRows] = await pool.execute('SELECT id FROM users WHERE referral_code = ?', [referralCodeInput]);
+                if (refRows.length > 0) referrerId = refRows[0].id;
+                else return socket.emit('register_response', { success: false, message: "無效的推薦碼" });
+            }
 
-        const player = players[socket.id];
-        const { zoneId, amount } = data;
+            const myReferralCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 安全檢查：餘額不足
-        if (player.balance < amount) {
-            socket.emit('error_msg', '餘額不足！');
-            return;
+            await pool.execute(
+                'INSERT INTO users (username, password, referral_code, referrer_id, balance) VALUES (?, ?, ?, ?, ?)',
+                [username, hashedPassword, myReferralCode, referrerId, 10000]
+            );
+            socket.emit('register_response', { success: true, message: "註冊成功！" });
+        } catch (error) {
+            socket.emit('register_response', { success: false, message: "號碼已被註冊" });
         }
+    });
 
-        // ✅ 扣款並紀錄
+    // --- 2. 登入邏輯 ---
+    socket.on('login', async (data) => {
+        try {
+            const { username, password } = data;
+            const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
+
+            if (rows.length === 0) return socket.emit('login_response', { success: false, message: "帳號不存在" });
+
+            const user = rows[0];
+            const isMatch = await bcrypt.compare(password, user.password);
+
+            if (isMatch) {
+                const token = jwt.sign(
+                    { id: user.id, username: user.username },
+                    JWT_SECRET,
+                    { expiresIn: '24h' }
+                );
+
+                // 踢掉舊連接
+                for (let sid in players) {
+                    if (players[sid].username === user.username) {
+                        io.to(sid).emit('error_msg', '帳號已在其他地方登入');
+                        io.sockets.sockets.get(sid)?.disconnect();
+                    }
+                }
+
+                players[socket.id] = {
+                    db_id: user.id,
+                    username: user.username,
+                    balance: user.balance,
+                    bets: { 0: 0, 1: 0, 2: 0, 3: 0 }
+                };
+
+                await pool.execute('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id]);
+
+                socket.emit('login_response', { 
+                    success: true, 
+                    token: token,
+                    username: user.username, 
+                    balance: user.balance,
+                    referral_code: user.referral_code
+                });
+                socket.emit('init_state', gameState);
+            } else {
+                socket.emit('login_response', { success: false, message: "密碼錯誤" });
+            }
+        } catch (error) {
+            socket.emit('login_response', { success: false, message: "伺服器錯誤" });
+        }
+    });
+
+    // --- 3. 下注同步 ---
+    socket.on('place_bet', async (data) => {
+        if (gameState.phase !== PHASES.BETTING) return;
+        const player = players[socket.id];
+        if (!player) return;
+
+        const { zoneId, amount } = data;
+        if (player.balance < amount) return socket.emit('error_msg', '餘額不足！');
+
         player.balance -= amount;
         player.bets[zoneId] += amount;
 
-        console.log(`玩家 ${socket.id} 下注 ${amount} 在區域 ${zoneId}, 剩餘 ${player.balance}`);
-
-        // 回傳最新餘額給前端
-        socket.emit('update_balance', { balance: player.balance });
+        try {
+            await pool.execute('UPDATE users SET balance = ? WHERE username = ?', [player.balance, player.username]);
+            socket.emit('update_balance', { balance: player.balance });
+        } catch (err) {
+            console.error("扣款失敗:", err);
+        }
     });
 
-    // 4. 斷線處理
     socket.on('disconnect', () => {
-        console.log(`👋 玩家斷線: ${socket.id}`);
-        // 選擇性：斷線後是否要刪除資料？
-        // delete players[socket.id]; 
-        // 為了讓玩家重整網頁後錢還在，暫時保留記憶體中的資料
+        delete players[socket.id];
     });
 });
 
 const PORT = process.env.PORT || 3001;
-
 server.listen(PORT, () => {
-    console.log(`🚀 後端伺服器運行中: http://localhost:${PORT}`);
+    console.log(`🚀 尊爵後端運行中: http://localhost:${PORT}`);
 });
