@@ -7,11 +7,14 @@ class GameApp {
     constructor() {
         this.app = null;
         this.squeezeCtrl = null;
+        
+        this.bgLayer = null;
         this.cardContainer = null;
+        this.uiLayer = null;
+
         this.resultTexts = []; 
         this.isPlaying = false;
         
-        // 回呼函式
         this.onBalanceChange = null; 
         this.onHistoryChange = null;
         this.onSqueezeStateChange = null; 
@@ -21,14 +24,14 @@ class GameApp {
         this.bankerSprites = []; 
         this.playerSprites = [[], [], [], []]; 
         
-        this.cardScale = 0.8; 
+        this.cardScale = 0.55; 
         this.squeezedMap = {}; 
         this.targetHands = null;
         this.serverResult = null;
+        this.assetsLoaded = false;
     }
 
     async init(containerElement) {
-        // 防止重複初始化
         if (this.app) {
             this.destroy();
         }
@@ -46,13 +49,21 @@ class GameApp {
         this.app.canvas.style.position = 'absolute';
         this.app.canvas.style.top = '0';
         this.app.canvas.style.left = '0';
-        this.app.canvas.style.zIndex = '0'; 
-
-        // 重新建立容器
-        this.cardContainer = new Container();
-        this.app.stage.addChild(this.cardContainer);
+        this.app.canvas.style.zIndex = '5'; 
         
-        this.squeezeCtrl = new SqueezeController();
+        // 初始狀態：允許穿透，這樣才能點到下方的下注按鈕
+        this.app.canvas.style.pointerEvents = 'none'; 
+
+        this.bgLayer = new Container();
+        this.cardContainer = new Container();
+        this.uiLayer = new Container();
+        
+        this.app.stage.addChild(this.bgLayer);
+        this.app.stage.addChild(this.cardContainer);
+        this.app.stage.addChild(this.uiLayer);
+        
+        // 傳入 app 實例以便 SqueezeController 能掛載自己的容器到 stage
+        this.squeezeCtrl = new SqueezeController(this.app);
         this.coinRain = new CoinRain(this.app);
 
         await this.loadAssets();
@@ -61,16 +72,21 @@ class GameApp {
     }
 
     async loadAssets() {
-        // 檢查是否已加載，避免重複噴錯
-        if (Assets.cache.has('card_back')) return;
-
-        const modules = import.meta.glob('/src/assets/cards/*.png', { eager: true, as: 'url' });
-        const assetsToLoad = [];
-        for (const path in modules) {
-            const name = path.split('/').pop().replace('.png', '');
-            assetsToLoad.push({ alias: name, src: modules[path] });
+        if (this.assetsLoaded) return;
+        try {
+            const modules = import.meta.glob('/src/assets/cards/*.png', { eager: true });
+            const assetsToLoad = [];
+            for (const path in modules) {
+                const name = path.split('/').pop().replace('.png', '');
+                const src = modules[path].default || modules[path];
+                assetsToLoad.push({ alias: name, src: src });
+            }
+            await Assets.load(assetsToLoad);
+            this.assetsLoaded = true;
+            console.log("📦 遊戲資源加載完畢");
+        } catch (error) {
+            console.error("❌ 資源加載失敗:", error);
         }
-        await Assets.load(assetsToLoad);
     }
 
     generateFakeHistory() {
@@ -85,10 +101,9 @@ class GameApp {
     }
 
     resetTable() {
-        if (this.cardContainer) {
-            this.cardContainer.removeChildren();
-        }
-        // 清除正在進行的 GSAP 動畫，防止物件被刪除但動畫還在回傳
+        if (this.cardContainer) this.cardContainer.removeChildren();
+        if (this.uiLayer) this.uiLayer.removeChildren();
+
         gsap.killTweensOf(this.bankerSprites);
         this.playerSprites.forEach(group => gsap.killTweensOf(group));
 
@@ -97,18 +112,25 @@ class GameApp {
         this.resultTexts = []; 
         this.squeezedMap = {};
         this.isPlaying = false;
+        
+        // 重置時確保畫布回歸穿透狀態
+        if (this.app) {
+            this.app.canvas.style.pointerEvents = 'none';
+            this.app.canvas.style.zIndex = '5';
+        }
     }
 
     startRoundWithData(serverResult) {
-        console.log("🎲 Pixi 接收到發牌數據:", serverResult);
+        if (!this.assetsLoaded) {
+            setTimeout(() => this.startRoundWithData(serverResult), 500);
+            return;
+        }
         this.serverResult = serverResult;
-
         const suitMap = { 's': 'spades', 'h': 'hearts', 'd': 'diamonds', 'c': 'clubs' };
         const rankMap = { 
             1: 'A', 2: '02', 3: '03', 4: '04', 5: '05', 6: '06', 7: '07', 8: '08', 9: '09',
             10: '10', 11: 'J', 12: 'Q', 13: 'K' 
         };
-
         const formatCard = (c) => `card_${suitMap[c.suit]}_${rankMap[c.rank]}`;
 
         this.targetHands = {
@@ -118,16 +140,15 @@ class GameApp {
             xuan:   serverResult.hands.xuan.map(formatCard),
             huang:  serverResult.hands.huang.map(formatCard),
         };
-
         this.startGame();
     }
 
     async startGame() {
-        if (this.isPlaying) return;
         this.isPlaying = true;
         this.resetTable();
-
-        if (!this.targetHands) return;
+        
+        // 重要：發牌開始時，允許畫布接收點擊，否則點不到卡片
+        this.app.canvas.style.pointerEvents = 'auto';
 
         const bankerHand = this.targetHands.banker.map(t => ({ texture: t }));
         const playersHands = [
@@ -138,7 +159,7 @@ class GameApp {
         ];
 
         const formatNiuLabel = (res) => {
-            if(res.type === 'NO_NIU') return '無牛';
+            if(!res || res.type === 'NO_NIU') return '無牛';
             if(res.niu === 10) return '牛牛';
             return `牛${res.niu}`;
         };
@@ -157,23 +178,18 @@ class GameApp {
     getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
         const w = this.app.screen.width;
         const h = this.app.screen.height;
-        const gap = w * 0.95 / 4;
-        const startOffset = (w - (w * 0.95)) / 2; 
-
+        const gap = w / 4.2;
+        const startOffset = (w - (gap * 3)) / 2;
         let centerX, centerY;
         if (zoneIndex === -1) { 
-            centerX = (w / 2) + 50; 
-            centerY = h * 0.22; 
+            centerX = w / 2; centerY = h * 0.25; 
         } else { 
-            centerX = startOffset + (zoneIndex * gap) + (gap / 2);
-            centerY = h * 0.62; 
+            centerX = startOffset + (zoneIndex * gap); centerY = h * 0.58; 
         }
-
-        const spreadAngle = 0.12; 
+        const spreadAngle = 0.1; 
         const centerIndex = (totalCards - 1) / 2;
         const angle = (cardIndex - centerIndex) * spreadAngle;
-        const xOffset = (cardIndex - centerIndex) * 18; 
-        
+        const xOffset = (cardIndex - centerIndex) * 22; 
         return { x: centerX + xOffset, y: centerY, rotation: angle };
     }
 
@@ -184,12 +200,11 @@ class GameApp {
         
         for (let round = 0; round < 5; round++) {
             for (let zoneIdx of dealOrder) {
-                const card = Sprite.from('card_back');
-                card.anchor.set(0.5, 0.5); 
+                const card = Assets.cache.has('card_back') ? Sprite.from('card_back') : new Sprite(Texture.WHITE);
+                card.anchor.set(0.5); 
                 card.scale.set(this.cardScale);
                 card.x = w / 2; 
                 card.y = h + 100;
-                
                 this.cardContainer.addChild(card);
 
                 if (zoneIdx === -1) this.bankerSprites.push(card);
@@ -200,20 +215,20 @@ class GameApp {
                 const isBanker = (zoneIdx === -1);
 
                 gsap.to(card, {
-                    x: target.x,
-                    y: target.y,
-                    rotation: target.rotation,
-                    duration: 0.4,
-                    delay: (round * 5 + (zoneIdx + 1)) * 0.08,
-                    ease: "sine.out",
+                    x: target.x, y: target.y, rotation: target.rotation,
+                    duration: 0.5,
+                    delay: (round * 5 + (zoneIdx + 1)) * 0.05,
+                    ease: "power2.out",
                     onComplete: () => {
                         if (!isBanker && !isFifthCard) {
                             this.flipCard(card, playersHands[zoneIdx][round].texture);
                         } else if (!isBanker && isFifthCard) {
+                            // 第五張牌設定為可點擊
                             card.eventMode = 'static';
                             card.cursor = 'pointer';
-                            card.on('pointerdown', () => {
-                                this.handleSqueezeClick(card, playersHands[zoneIdx][round]);
+                            card.on('pointerdown', (e) => {
+                                e.stopPropagation(); // 防止事件穿透
+                                this.handleSqueezeClick(card, playersHands[zoneIdx][round], zoneIdx);
                             });
                         }
                     }
@@ -224,27 +239,37 @@ class GameApp {
 
     async flipCard(sprite, textureName) {
         if (!sprite || !this.app) return;
-        const tex = Texture.from(textureName);
-        gsap.to(sprite.scale, { x: 0, duration: 0.12, onComplete: () => {
-            sprite.texture = tex;
-            gsap.to(sprite.scale, { x: this.cardScale, duration: 0.12 });
-        }});
+        try {
+            const tex = Texture.from(textureName);
+            gsap.to(sprite.scale, { x: 0, duration: 0.15, onComplete: () => {
+                sprite.texture = tex;
+                gsap.to(sprite.scale, { x: this.cardScale, duration: 0.15 });
+            }});
+        } catch (e) { console.error("翻牌失敗:", textureName); }
     }
 
-    async handleSqueezeClick(cardSprite, cardData) {
-        if (this.squeezedMap[cardSprite.zoneId]) return; 
-        this.squeezedMap[cardSprite.zoneId] = true;
+    async handleSqueezeClick(cardSprite, cardData, zoneIdx) {
+        if (this.squeezedMap[zoneIdx]) return; 
+        this.squeezedMap[zoneIdx] = true;
         
         cardSprite.eventMode = 'none';
         cardSprite.visible = false;
 
+        // 1. 進入咪牌狀態：通知 UI 隱藏，提升畫布層級
         if (this.onSqueezeStateChange) this.onSqueezeStateChange(true, 0); 
-        this.app.canvas.style.zIndex = '999';
+        this.app.canvas.style.zIndex = '2000'; // 確保在所有 UI 之上
+        this.app.canvas.style.pointerEvents = 'auto';
 
+        // 2. 呼叫 SqueezeController 開始咪牌
         this.squeezeCtrl.start(cardData.texture, () => {
+            // 3. 咪牌完成回調
             cardSprite.texture = Texture.from(cardData.texture);
             cardSprite.visible = true;
-            this.app.canvas.style.zIndex = '0';
+            
+            // 恢復原本層級與穿透
+            this.app.canvas.style.zIndex = '5'; 
+            this.app.canvas.style.pointerEvents = 'auto'; // 發牌完仍保持 auto 才能點下一張，直到 settleAll 結束
+            
             if (this.onSqueezeStateChange) this.onSqueezeStateChange(false);
             gsap.fromTo(cardSprite.scale, {x: 1.1, y: 1.1}, {x: this.cardScale, y: this.cardScale, duration: 0.2});
         });
@@ -258,58 +283,61 @@ class GameApp {
                 this.flipCard(this.playerSprites[z][4], this.targetHands[handKeys[z]][4]);
             }
         }
-        setTimeout(() => this.openBankerAndSettle(), 600);
+        setTimeout(() => this.openBankerAndSettle(), 800);
     }
 
     async openBankerAndSettle() {
         const bankerCards = this.targetHands.banker;
         for(let i=0; i<5; i++) {
-            await new Promise(r => setTimeout(r, 120)); 
+            await new Promise(r => setTimeout(r, 150)); 
             this.flipCard(this.bankerSprites[i], bankerCards[i]);
         }
-        setTimeout(() => this.settleAll(), 500);
+        setTimeout(() => this.settleAll(), 600);
     }
 
     async settleAll() {
+        if (!this.serverResult) return;
         const winners = this.serverResult.winners; 
         const winnerKeys = ['tian', 'di', 'xuan', 'huang'];
         const winningZones = [];
 
-        const styleWin = new TextStyle({ fontFamily: 'Arial', fontSize: 32, fontWeight: 'bold', fill: '#f1c40f', stroke: '#000', strokeThickness: 4 });
-        const styleLose = new TextStyle({ fontFamily: 'Arial', fontSize: 32, fontWeight: 'bold', fill: '#bdc3c7', stroke: '#000', strokeThickness: 4 });
+        const styleWin = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#f1c40f', stroke: '#000', strokeThickness: 4 });
+        const styleLose = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#bdc3c7', stroke: '#000', strokeThickness: 4 });
 
-        // 莊家結果
-        const bLabel = this.serverResult.results.banker.niu === 10 ? "牛牛" : `牛${this.serverResult.results.banker.niu || 0}`;
+        const bRes = this.serverResult.results.banker;
+        const bLabel = bRes.niu === 10 ? "牛牛" : (bRes.niu > 0 ? `牛${bRes.niu}` : "無牛");
         const bankerText = new Text({ text: bLabel, style: styleWin });
         const bPos = this.getFanCardProps(-1, 2);
         bankerText.anchor.set(0.5);
-        bankerText.x = bPos.x; bankerText.y = bPos.y - 80;
-        this.cardContainer.addChild(bankerText);
+        bankerText.x = bPos.x; bankerText.y = bPos.y - 100;
+        this.uiLayer.addChild(bankerText);
 
-        // 閒家結果
         for(let i=0; i<4; i++) {
-            const isWin = winners[winnerKeys[i]];
+            const key = winnerKeys[i];
+            const isWin = winners[key];
             if (isWin) winningZones.push(i);
-
-            const pRes = this.serverResult.results[winnerKeys[i]];
-            const pLabel = pRes.niu === 10 ? "牛牛" : `牛${pRes.niu || 0}`;
+            const pRes = this.serverResult.results[key];
+            const pLabel = pRes.niu === 10 ? "牛牛" : (pRes.niu > 0 ? `牛${pRes.niu}` : "無牛");
             const typeText = new Text({ text: pLabel, style: isWin ? styleWin : styleLose });
             const pPos = this.getFanCardProps(i, 2);
             typeText.anchor.set(0.5);
-            typeText.x = pPos.x; typeText.y = pPos.y + 70;
-            this.cardContainer.addChild(typeText);
+            typeText.x = pPos.x; typeText.y = pPos.y + 100;
+            this.uiLayer.addChild(typeText);
         }
 
         if (winningZones.length > 0) this.coinRain.play();
         if (this.onWinZones) this.onWinZones(winningZones);
 
         this.isPlaying = false;
+        // 結算完成，恢復畫布穿透，讓用戶可以點擊下一局籌碼
+        this.app.canvas.style.pointerEvents = 'none';
     }
 
     destroy() {
         if (this.app) {
             this.app.destroy(true, { children: true, texture: false, baseTexture: false });
             this.app = null;
+            this.assetsLoaded = false;
         }
     }
 }

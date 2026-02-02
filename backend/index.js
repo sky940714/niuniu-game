@@ -20,7 +20,8 @@ const io = new Server(server, {
     }
 });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'Prestige_NiuNiu_Secret_2026';
+// 使用你提供的 Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'Prestige_NiuNiu_Super_Secret_2026';
 
 // === 🗄️ MySQL 連線設定 ===
 const pool = mysql.createPool({
@@ -48,7 +49,7 @@ let gameState = {
 let players = {}; 
 const ZONE_MAP = { 0: 'tian', 1: 'di', 2: 'xuan', 3: 'huang' };
 
-// === ⏱️ 伺服器心跳 (邏輯保持不變) ===
+// === ⏱️ 伺服器心跳 ===
 setInterval(async () => {
     gameState.countdown--;
     if (gameState.countdown <= 0) {
@@ -142,40 +143,59 @@ setInterval(async () => {
     }
 }, 1000);
 
-// === 🔌 Socket 通訊邏輯 ===
-io.on('connection', async (socket) => {
-    console.log(`⚡ 連線嘗試: ${socket.id}`);
-
-    // --- 🆕 自動驗證 Token (重整自動登入) ---
+// === 🛡️ Socket.io 中間件：統一驗證與玩家初始化 ===
+io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
-    if (token) {
-        try {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            const [rows] = await pool.execute(
-                'SELECT id, username, balance, referral_code FROM users WHERE id = ?', 
-                [decoded.id]
-            );
+    
+    if (!token) {
+        return next(); // 允許連線進入，但此時 socket.user 為 undefined
+    }
 
-            if (rows.length > 0) {
-                const user = rows[0];
-                players[socket.id] = {
-                    db_id: user.id,
-                    username: user.username,
-                    balance: user.balance,
-                    bets: { 0: 0, 1: 0, 2: 0, 3: 0 }
-                };
-                // 成功後直接通知前端進入大廳
-                socket.emit('auth_success', {
-                    username: user.username,
-                    balance: user.balance,
-                    referral_code: user.referral_code
-                });
-                socket.emit('init_state', gameState);
-                console.log(`✨ 玩家 ${user.username} 透過 Token 自動登入成功`);
-            }
-        } catch (err) {
-            console.log("⚠️ Token 驗證失敗或已過期");
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const [rows] = await pool.execute(
+            'SELECT id, username, balance, referral_code FROM users WHERE id = ?', 
+            [decoded.id]
+        );
+
+        if (rows.length > 0) {
+            const user = rows[0];
+            // 將玩家資料掛載到 socket 物件上供後續使用
+            socket.user = {
+                db_id: user.id,
+                username: user.username,
+                balance: user.balance,
+                referral_code: user.referral_code
+            };
+            next();
+        } else {
+            next(new Error("使用者不存在"));
         }
+    } catch (err) {
+        console.error("Token 驗證失敗:", err.message);
+        // 如果 Token 過期但不影響連線，可以用 next()，若要強制登入則 next(err)
+        next(); 
+    }
+});
+
+// === 🔌 Socket 通訊邏輯 ===
+io.on('connection', (socket) => {
+    console.log(`⚡ 連線成功: ${socket.id}`);
+
+    // 如果中間件驗證成功，初始化玩家狀態
+    if (socket.user) {
+        players[socket.id] = {
+            ...socket.user,
+            bets: { 0: 0, 1: 0, 2: 0, 3: 0 }
+        };
+        
+        socket.emit('auth_success', {
+            username: socket.user.username,
+            balance: socket.user.balance,
+            referral_code: socket.user.referral_code
+        });
+        socket.emit('init_state', gameState);
+        console.log(`✨ 玩家 ${socket.user.username} 自動登入成功`);
     }
 
     // --- 1. 註冊邏輯 ---
@@ -225,7 +245,7 @@ io.on('connection', async (socket) => {
                     { expiresIn: '24h' }
                 );
 
-                // 踢掉舊連接
+                // 踢掉同帳號的舊連接
                 for (let sid in players) {
                     if (players[sid].username === user.username) {
                         io.to(sid).emit('error_msg', '帳號已在其他地方登入');
@@ -258,7 +278,7 @@ io.on('connection', async (socket) => {
         }
     });
 
-    // --- 3. 下注同步 ---
+    // --- 3. 下注邏輯 ---
     socket.on('place_bet', async (data) => {
         if (gameState.phase !== PHASES.BETTING) return;
         const player = players[socket.id];
@@ -279,6 +299,7 @@ io.on('connection', async (socket) => {
     });
 
     socket.on('disconnect', () => {
+        console.log(`❌ 斷開連線: ${socket.id}`);
         delete players[socket.id];
     });
 });

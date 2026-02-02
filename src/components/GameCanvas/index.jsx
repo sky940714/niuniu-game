@@ -19,13 +19,17 @@ const GameCanvas = () => {
   return (
     <div 
       ref={containerRef} 
+      className="game-canvas-container"
       style={{ 
-        position: 'absolute', 
+        position: 'fixed', // 使用 fixed 確保相對於視窗
         top: 0, 
         left: 0, 
-        width: '100%', 
-        height: '100%', 
-        zIndex: 1 // Pixi 在底層
+        width: '100vw', 
+        height: '100vh', 
+        zIndex: 5,        // 提高層級，確保在背景圖 (通常為 0) 之上
+        pointerEvents: 'none', // 預設穿透，不影響下注
+        overflow: 'hidden',
+        display: 'block'
       }} 
     />
   );

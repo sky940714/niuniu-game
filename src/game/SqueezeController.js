@@ -1,59 +1,55 @@
 import { Container, Sprite, Texture, Mesh, PlaneGeometry } from 'pixi.js';
-import { gameApp } from './app';
 import gsap from 'gsap';
 
 export class SqueezeController {
-  constructor() {
+  constructor(app) {
+    this.app = app; // 從 app.js 傳入 app 實例
     this.container = new Container();
     this.container.visible = false;
-    this.container.zIndex = 100; // 確保在最上層
+    this.container.zIndex = 2000; // 提高層級
 
-    // 背景遮罩 (黑色半透明)
+    // 背景遮罩
     this.bg = new Sprite(Texture.WHITE);
     this.bg.tint = 0x000000;
-    this.bg.alpha = 0.9;
-    this.bg.interactive = true; // 阻擋下方點擊
+    this.bg.alpha = 0.8;
+    this.bg.eventMode = 'static'; // Pixi v8 使用 eventMode 代替 interactive
     this.container.addChild(this.bg);
 
-    this.cardFace = null;       // 底牌 (花色)
-    this.cardBack = null;       // 牌背 (可變形網格)
-    this.originalVertices = null; // 原始網格數據備份
-    this.onCompleteCallback = null; // 搓牌完成後的通知對象
+    this.cardFace = null;
+    this.cardBack = null;
+    this.originalVertices = null;
+    this.onCompleteCallback = null;
     
     this.isSqueezing = false;
     this.startPoint = { x: 0, y: 0 };
     this.cardHeight = 0;
     
-    // 加入遊戲舞台
-    gameApp.app.stage.addChild(this.container);
+    // 將自己加入舞台
+    this.app.stage.addChild(this.container);
   }
 
-  /**
-   * 啟動搓牌
-   * @param {string} textureName - 撲克牌花色圖片名稱
-   * @param {Function} onComplete - 搓完後執行的函式
-   */
   start(textureName, onComplete) {
     this.onCompleteCallback = onComplete;
     
-    this.bg.width = gameApp.app.screen.width;
-    this.bg.height = gameApp.app.screen.height;
+    // 更新背景尺寸
+    this.bg.width = this.app.screen.width;
+    this.bg.height = this.app.screen.height;
 
-    // 1. 建立底牌 (顯示花色)
+    // 1. 建立底牌
     if (this.cardFace) this.cardFace.destroy();
     this.cardFace = Sprite.from(textureName);
     this.cardFace.anchor.set(0.5);
     this.cardFace.scale.set(1.5); 
-    this.cardFace.x = gameApp.app.screen.width / 2;
-    this.cardFace.y = gameApp.app.screen.height / 2;
+    this.cardFace.x = this.app.screen.width / 2;
+    this.cardFace.y = this.app.screen.height / 2;
     this.container.addChild(this.cardFace);
 
-    // 2. 建立牌背 (Mesh 網格)
+    // 2. 建立牌背 Mesh
     if (this.cardBack) this.cardBack.destroy();
     const backTexture = Texture.from('card_back');
     this.cardHeight = backTexture.height;
 
-    // 設定網格密度 20x20 (讓彎曲更圓滑)
+    // Pixi v8 的 PlaneGeometry 參數結構修正
     const geometry = new PlaneGeometry({
       width: backTexture.width, 
       height: backTexture.height,
@@ -66,53 +62,38 @@ export class SqueezeController {
       texture: backTexture
     });
     
-    this.cardBack.pivot.set(backTexture.width/2, backTexture.height/2);
+    this.cardBack.pivot.set(backTexture.width / 2, backTexture.height / 2);
     this.cardBack.x = this.cardFace.x;
     this.cardBack.y = this.cardFace.y;
     this.cardBack.scale.set(1.5);
 
-    // 3. 備份原始頂點數據 (重要：防止變形累積誤差)
+    // 3. 獲取頂點數據 (Pixi v8 修正)
+    // 注意：v8 中存取 attribute 的方式
     const positionAttribute = geometry.getAttribute('aPosition');
-    this.originalVertices = Float32Array.from(positionAttribute.buffer.data);
+    this.originalVertices = new Float32Array(positionAttribute.buffer.data);
 
     // 開啟互動
-    this.cardBack.interactive = true;
+    this.cardBack.eventMode = 'static';
     this.cardBack.cursor = 'grab';
     this.container.addChild(this.cardBack);
 
-    // 綁定拖曳事件
+    // 綁定事件
     this.cardBack.on('pointerdown', this.onDragStart.bind(this));
     this.cardBack.on('pointermove', this.onDragMove.bind(this));
     this.cardBack.on('pointerup', this.onDragEnd.bind(this));
     this.cardBack.on('pointerupoutside', this.onDragEnd.bind(this));
 
-    // 進場淡入動畫
+    // 進場
     this.container.visible = true;
     this.container.alpha = 0;
     gsap.to(this.container, { alpha: 1, duration: 0.3 });
   }
 
-  // 關閉並執行回呼
-  close() {
-    gsap.to(this.container, { 
-      alpha: 0, 
-      duration: 0.3, 
-      onComplete: () => {
-        this.container.visible = false;
-        // 通知主程式：搓牌結束
-        if (this.onCompleteCallback) {
-            this.onCompleteCallback();
-            this.onCompleteCallback = null;
-        }
-      }
-    });
-  }
-
-  // --- 互動邏輯 ---
-
   onDragStart(event) {
     this.isSqueezing = true;
-    this.startPoint = event.global.clone();
+    // 使用 event.client 確保在不同縮放下的座標正確
+    this.startPoint = { x: event.global.x, y: event.global.y };
+    this.cardBack.cursor = 'grabbing';
   }
 
   onDragMove(event) {
@@ -121,96 +102,99 @@ export class SqueezeController {
     const currentPoint = event.global;
     const dy = currentPoint.y - this.startPoint.y;
     
-    // 【限制】最大只能拉牌身高度的 60%
-    const maxDist = this.cardHeight * 0.6; 
-    
-    // 限制只能往上拉 (負值)，且不能超過 maxDist
-    let moveY = Math.min(0, Math.max(dy, -maxDist));
+    // 最大向上拉動距離
+    const maxDist = this.cardHeight * 0.8; 
+    let moveY = Math.max(dy, -maxDist); // 向上拉是負值
 
-    this.updateMesh(moveY);
+    // 只有當真的往上拉時才更新網格
+    if (moveY < 0) {
+      this.updateMesh(moveY);
+    }
   }
 
-  // 更新網格形狀 (彎曲算法)
   updateMesh(moveY) {
     const geometry = this.cardBack.geometry;
-    const positionBuffer = geometry.getAttribute('aPosition').buffer;
-    const data = positionBuffer.data;
+    const positionAttribute = geometry.getAttribute('aPosition');
+    const data = positionAttribute.buffer.data;
     const original = this.originalVertices;
     const height = this.cardHeight;
     
     for (let i = 0; i < data.length; i += 2) {
       const originalY = original[i + 1];
-      const ratio = originalY / height; // 0(頂部) ~ 1(底部)
+      // Y 座標歸一化 (從中心點轉為 0~1)
+      const ratio = (originalY + height / 2) / height; 
       
-      // 只移動下半部 (0.3 以下不動)
-      if (ratio > 0.3) { 
-        const part = (ratio - 0.3) / 0.7;
-        
-        // 二次曲線 (讓邊緣彎曲更自然)
-        const curve = Math.pow(part, 2); 
-        const deform = moveY * curve; 
-        
-        data[i + 1] = originalY + deform; 
+      // 從底部向上搓 (ratio 接近 1 的部分移動)
+      if (ratio > 0.1) { 
+        const weight = Math.pow(ratio, 3); // 越靠底部權重越大
+        data[i + 1] = originalY + (moveY * weight);
       }
     }
-    positionBuffer.update();
+    // 關鍵：標記緩衝區需要更新，否則畫面不會動
+    positionAttribute.buffer.update();
   }
 
   onDragEnd(event) {
+    if (!this.isSqueezing) return;
     this.isSqueezing = false;
+    this.cardBack.cursor = 'grab';
 
-    const currentPoint = event.global;
-    const dy = currentPoint.y - this.startPoint.y;
-    const threshold = this.cardHeight * 0.4; // 閾值：拉超過 40% 就算成功
+    const dy = event.global.y - this.startPoint.y;
+    const threshold = -this.cardHeight * 0.3; // 向上拉超過 30% 就開牌
 
-    if (dy < -threshold) {
-      // ✅ 成功開牌
+    if (dy < threshold) {
       this.revealCard();
     } else {
-      // ❌ 沒拉到位，彈回去
       this.resetCard();
     }
   }
 
-  // 彈回重置動畫
   resetCard() {
-    // 視覺上用彈性動畫縮放一下
-    gsap.to(this.cardBack.scale, { 
-        y: 1.5, duration: 0.3, ease: "elastic.out(1, 0.3)" 
-    });
-    
-    // 將網格頂點歸位
     const geometry = this.cardBack.geometry;
-    const positionBuffer = geometry.getAttribute('aPosition').buffer;
-    const data = positionBuffer.data;
+    const positionAttribute = geometry.getAttribute('aPosition');
+    const data = positionAttribute.buffer.data;
     const original = this.originalVertices;
-    
-    // 直接還原所有點的位置
-    for (let i = 0; i < data.length; i++) {
-        data[i] = original[i];
-    }
-    positionBuffer.update();
+
+    // 建立一個 proxy 物件給 GSAP 做數值動畫
+    const obj = { val: 1 }; 
+    gsap.to(obj, {
+      val: 0,
+      duration: 0.4,
+      ease: "elastic.out(1, 0.5)",
+      onUpdate: () => {
+        for (let i = 0; i < data.length; i++) {
+          // 根據動畫進度插值回到原始位置
+          data[i] = data[i] + (original[i] - data[i]) * (1 - obj.val);
+        }
+        positionAttribute.buffer.update();
+      }
+    });
   }
 
-  // 成功亮牌動畫
   revealCard() {
-    // 牌背往上飛走並消失
     gsap.to(this.cardBack, {
-        alpha: 0,
-        y: this.cardBack.y - 150, 
-        duration: 0.4,
-        ease: "back.in(1.2)",
-        onComplete: () => {
-            // 稍作停留展示底牌，然後關閉
-            gsap.delayedCall(0.5, () => {
-                this.close();
-            });
-        }
+      alpha: 0,
+      y: this.cardBack.y - 200, 
+      duration: 0.5,
+      ease: "power2.in",
+      onComplete: () => {
+        gsap.delayedCall(0.8, () => this.close());
+      }
     });
     
-    // 底牌放大慶祝
     gsap.to(this.cardFace.scale, { 
-        x: 1.8, y: 1.8, duration: 0.3, yoyo: true, repeat: 1 
+      x: 1.8, y: 1.8, duration: 0.3, yoyo: true, repeat: 1 
+    });
+  }
+
+  close() {
+    gsap.to(this.container, { 
+      alpha: 0, 
+      duration: 0.3, 
+      onComplete: () => {
+        this.container.visible = false;
+        if (this.onCompleteCallback) this.onCompleteCallback();
+      }
     });
   }
 }

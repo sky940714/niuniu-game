@@ -4,12 +4,18 @@ import Lobby from './pages/Lobby';
 import GameCanvas from './components/GameCanvas';
 import GameUI from './components/GameUI';
 import useGameStore from './stores/useGameStore';
-import { socket } from './socket';
+import { socket, connectSocket } from './socket'; // 👈 引入 connectSocket
 
 function App() {
   const currentPage = useGameStore((state) => state.currentPage);
   const reLogin = useGameStore((state) => state.reLogin);
   const logout = useGameStore((state) => state.logout);
+
+  // --- 🆕 初始化連線邏輯 ---
+  useEffect(() => {
+    // 當頁面重新載入時，嘗試使用本地 Token 連線
+    connectSocket();
+  }, []);
 
   useEffect(() => {
     // --- 🆕 自動登入監聽邏輯 ---
@@ -43,7 +49,7 @@ function App() {
       console.error("⚠️ 收到伺服器錯誤:", msg);
 
       // 🛡️ 只有包含以下關鍵字時才強制踢下線，避免誤殺
-      const fatalErrorKeywords = ['token', '登入', '驗證', '過期', '踢出', 'kicked'];
+      const fatalErrorKeywords = ['token', '登入', '驗證', '過期', '踢出', 'kicked', '使用者不存在'];
       const isFatal = fatalErrorKeywords.some(key => msg.includes(key));
 
       if (isFatal) {
