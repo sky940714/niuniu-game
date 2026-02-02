@@ -1,6 +1,5 @@
 import { Application, Assets, Sprite, Text, TextStyle, Container, Texture } from 'pixi.js';
 import { SqueezeController } from './SqueezeController';
-import { calculateNiu, compareHands } from './logic'; 
 import { CoinRain } from './Effects';
 import gsap from 'gsap';
 
@@ -25,6 +24,10 @@ class GameApp {
     
     this.cardScale = 0.8; 
     this.squeezedMap = {}; 
+
+    // Store backend data
+    this.targetHands = null;
+    this.serverResult = null;
   }
 
   async init(containerElement) {
@@ -72,45 +75,88 @@ class GameApp {
     await Assets.load(assetsToLoad);
   }
 
-  // 🔥 新增：手動清空桌面的方法
+  // Manual table reset (clears visual but keeps data for current round logic)
   resetTable() {
       this.cardContainer.removeChildren();
       this.bankerSprites = [];
       this.playerSprites = [[], [], [], []];
       this.resultTexts = []; 
       this.squeezedMap = {};
+      // Note: do not clear this.targetHands here as it is needed for the round
   }
 
-  async startGame(bets = {0:0, 1:0, 2:0, 3:0}) {
+  // === Core: Receive backend data and start animation ===
+  startRoundWithData(serverResult) {
+      console.log("Pixi received server data:", serverResult);
+      
+      this.serverResult = serverResult;
+
+      const suitMap = { 
+          's': 'spades',   // Spades
+          'h': 'hearts',   // Hearts
+          'd': 'diamonds', // Diamonds
+          'c': 'clubs'     // Clubs
+      };
+
+      const rankMap = { 
+          1: 'A', 
+          2: '02', 3: '03', 4: '04', 5: '05', 6: '06', 7: '07', 8: '08', 9: '09',
+          10: '10', 
+          11: 'J', 12: 'Q', 13: 'K' 
+      };
+
+      const formatCard = (c) => {
+          const s = suitMap[c.suit];
+          const r = rankMap[c.rank];
+          return `card_${s}_${r}`; 
+      };
+
+      this.targetHands = {
+          banker: serverResult.hands.banker.map(formatCard),
+          tian:   serverResult.hands.tian.map(formatCard),
+          di:     serverResult.hands.di.map(formatCard),
+          xuan:   serverResult.hands.xuan.map(formatCard),
+          huang:  serverResult.hands.huang.map(formatCard),
+      };
+
+      this.startGame();
+  }
+
+  async startGame() {
     if (this.isPlaying) return;
     this.isPlaying = true;
     
-    // 確保開始前再清一次，雙重保險
     this.resetTable();
 
-    const suits = ['spades', 'hearts', 'clubs', 'diamonds'];
-    const ranks = ['02', '03', '04', '05', '06', '07', '08', '09', '10', 'J', 'Q', 'K', 'A'];
-    let deck = [];
-    
-    while(deck.length < 25) {
-        const s = suits[Math.floor(Math.random() * suits.length)];
-        const r = ranks[Math.floor(Math.random() * ranks.length)];
-        const key = `${s}_${r}`;
-        if (!deck.find(c => c.key === key)) {
-            deck.push({ suit: s, rank: r, texture: `card_${s}_${r}`, key });
-        }
+    if (!this.targetHands) {
+        console.error("No deal data received! Cannot start animation.");
+        this.isPlaying = false;
+        return;
     }
 
-    const bankerHand = deck.slice(0, 5);
+    const bankerHand = this.targetHands.banker.map(t => ({ texture: t }));
     const playersHands = [
-        deck.slice(5, 10),  
-        deck.slice(10, 15), 
-        deck.slice(15, 20), 
-        deck.slice(20, 25)  
+        this.targetHands.tian.map(t => ({ texture: t })),
+        this.targetHands.di.map(t => ({ texture: t })),
+        this.targetHands.xuan.map(t => ({ texture: t })),
+        this.targetHands.huang.map(t => ({ texture: t }))
     ];
 
-    const bResult = calculateNiu(bankerHand);
-    const pResults = playersHands.map(h => calculateNiu(h));
+    const formatNiuLabel = (res) => {
+        if(res.type === 'NO_NIU') return '無牛';
+        if(res.niu === 10) return '牛牛';
+        return `牛${res.niu}`;
+    };
+
+    const bResult = { ...this.serverResult.results.banker, label: formatNiuLabel(this.serverResult.results.banker) };
+    const pResults = [
+        { ...this.serverResult.results.tian, label: formatNiuLabel(this.serverResult.results.tian) },
+        { ...this.serverResult.results.di, label: formatNiuLabel(this.serverResult.results.di) },
+        { ...this.serverResult.results.xuan, label: formatNiuLabel(this.serverResult.results.xuan) },
+        { ...this.serverResult.results.huang, label: formatNiuLabel(this.serverResult.results.huang) }
+    ];
+
+    const bets = {0:0, 1:0, 2:0, 3:0}; 
 
     await this.dealRound(bankerHand, playersHands, bResult, pResults, bets);
   }
@@ -183,14 +229,18 @@ class GameApp {
                 delay: (round * 5 + (zoneIdx + 1)) * 0.1, 
                 ease: "power2.out",
                 onComplete: () => {
+                    // Reveal first 4 cards
                     if (!isBanker && !isFifthCard) {
                         this.flipCard(card, playersHands[zoneIdx][round].texture);
-                    } else if (!isBanker && isFifthCard) {
+                    } 
+                    // Prepare 5th card for squeeze
+                    else if (!isBanker && isFifthCard) {
                         card.eventMode = 'static';
                         card.cursor = 'pointer';
                         card.bgKey = playersHands[zoneIdx][round].texture; 
                         card.zoneId = zoneIdx;
                         
+                        // 🔥 Enabled: Allow clicking to squeeze
                         card.on('pointerdown', () => {
                             this.handleSqueezeClick(card, playersHands[zoneIdx][round], bankerHand, bResult, pResults, bets);
                         });
@@ -199,10 +249,6 @@ class GameApp {
             });
         }
     }
-
-    setTimeout(() => {
-        this.startSqueezeTimer(10, playersHands, bankerHand, bResult, pResults, bets);
-    }, (25 * 0.1 + 0.5) * 1000); 
   }
 
   async flipCard(sprite, textureName) {
@@ -230,79 +276,74 @@ class GameApp {
           if (this.onSqueezeStateChange) this.onSqueezeStateChange(false);
           
           gsap.fromTo(cardSprite.scale, {x: 1.0, y: 1.0}, {x: this.cardScale, y: this.cardScale, duration: 0.3});
-          
-          this.checkAllSqueezed(bankerHand, bResult, pResults, bets);
       });
   }
 
-  startSqueezeTimer(seconds, playersHands, bankerHand, bResult, pResults, bets) {
-      let timeLeft = seconds;
-      
-      if (this.onSqueezeStateChange) this.onSqueezeStateChange(true, timeLeft);
+  // UI calls this to reveal any un-squeezed cards when time is up
+  async revealAllRemaining() {
+      if(!this.targetHands) return;
 
-      this.squeezeTimer = setInterval(() => {
-          timeLeft--;
-          if (this.onSqueezeTick) this.onSqueezeTick(timeLeft);
-
-          const allSqueezed = [0,1,2,3].every(z => this.squeezedMap[z]);
-          
-          if (timeLeft <= 0 || allSqueezed) {
-              clearInterval(this.squeezeTimer);
-              if (this.onSqueezeStateChange) this.onSqueezeStateChange(false);
-              this.revealAllRemaining(playersHands, bankerHand, bResult, pResults, bets);
-          }
-      }, 1000);
-  }
-
-  checkAllSqueezed(bankerHand, bResult, pResults, bets) {
-      const allSqueezed = [0,1,2,3].every(z => this.squeezedMap[z]);
-      if (allSqueezed) {
-          if (this.squeezeTimer) clearInterval(this.squeezeTimer);
-          if (this.onSqueezeStateChange) this.onSqueezeStateChange(false);
-          setTimeout(() => {
-               this.openBankerAndSettle(bankerHand, bResult, pResults, bets);
-          }, 500);
-      }
-  }
-
-  async revealAllRemaining(playersHands, bankerHand, bResult, pResults, bets) {
       const { Texture } = await import('pixi.js');
       
       for(let z=0; z<4; z++) {
-          if (!this.squeezedMap[z]) {
-              const card = this.playerSprites[z][4];
-              const texture = playersHands[z][4].texture;
-              card.eventMode = 'none'; 
-              this.flipCard(card, texture);
+          const card = this.playerSprites[z][4];
+          const handKeys = ['tian', 'di', 'xuan', 'huang'];
+          const textureName = this.targetHands[handKeys[z]][4];
+          
+          // Check if not already revealed (squeezed)
+          // Simple check: compare texture name. If it's still 'card_back', flip it.
+          // Note: 'card_back' is the alias for back texture.
+          // Since we don't easily access texture alias property, let's rely on squeezedMap or visual check
+          
+          // Better check: use squeezedMap
+          if (!this.squeezedMap[z]) { 
+               this.flipCard(card, textureName);
           }
       }
       
       setTimeout(() => {
-          this.openBankerAndSettle(bankerHand, bResult, pResults, bets);
+          this.openBankerAndSettle();
       }, 800);
   }
 
-  async openBankerAndSettle(bankerHand, bResult, pResults, bets) {
+  async openBankerAndSettle() {
       const { Texture } = await import('pixi.js');
+      const bankerCards = this.targetHands.banker;
+
       for(let i=0; i<5; i++) {
           await new Promise(r => setTimeout(r, 150)); 
           const card = this.bankerSprites[i];
           
           gsap.to(card.scale, {x:0, duration:0.1, onComplete:()=>{
-               card.texture = Texture.from(bankerHand[i].texture);
+               card.texture = Texture.from(bankerCards[i]);
                gsap.to(card.scale, {x: this.cardScale, duration:0.1});
           }});
       }
 
       setTimeout(() => {
-          this.settleAll(bResult, pResults, bets);
+          this.settleAll();
       }, 500);
   }
 
-  async settleAll(bResult, pResults, bets) {
-    let totalPayout = 0;
-    let totalNetProfit = 0; 
+  async settleAll() {
     let winningZones = [];
+
+    const formatNiuLabel = (res) => {
+        if(res.type === 'NO_NIU') return '無牛';
+        if(res.niu === 10) return '牛牛';
+        return `牛${res.niu}`;
+    };
+
+    const bResult = { label: formatNiuLabel(this.serverResult.results.banker) };
+    const pResults = [
+        { label: formatNiuLabel(this.serverResult.results.tian) },
+        { label: formatNiuLabel(this.serverResult.results.di) },
+        { label: formatNiuLabel(this.serverResult.results.xuan) },
+        { label: formatNiuLabel(this.serverResult.results.huang) }
+    ];
+
+    const winners = this.serverResult.winners; 
+    const winnerKeys = ['tian', 'di', 'xuan', 'huang'];
 
     const styleWin = new TextStyle({
         fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#f1c40f',
@@ -313,67 +354,44 @@ class GameApp {
         stroke: { color: '#000000', width: 4 }
     });
 
+    // Show Banker Result
     const bankerText = new Text({ text: bResult.label, style: styleWin });
     bankerText.anchor.set(0, 0.5); 
-    
     const bankerProps = this.getFanCardProps(-1, 4);
     bankerText.x = bankerProps.x + 60; 
     bankerText.y = bankerProps.y - 32; 
-    
     this.cardContainer.addChild(bankerText);
     this.resultTexts.push(bankerText);
 
+    // Show Player Results
     for(let i=0; i<4; i++) {
         const centerProps = this.getFanCardProps(i, 2); 
+        const isWin = winners[winnerKeys[i]]; 
         
-        const winMultiplier = compareHands(pResults[i], bResult);
-        const betAmount = bets[i] || 0;
-        const netWinAmount = winMultiplier * betAmount; 
-        const payout = betAmount + netWinAmount;
-
-        totalPayout += payout;
-        totalNetProfit += netWinAmount;
-
-        const isWin = winMultiplier > 0;
         if (isWin) {
             winningZones.push(i);
         }
 
-        const resultStr = isWin ? `+${netWinAmount}` : `${netWinAmount}`; 
-        
         const typeText = new Text({ text: pResults[i].label, style: isWin ? styleWin : styleLose });
         typeText.anchor.set(0.5);
         typeText.scale.set(0.8); 
         typeText.x = centerProps.x;
         typeText.y = centerProps.y + 10;  
 
-        if (betAmount > 0) {
-            const moneyText = new Text({ text: resultStr, style: isWin ? styleWin : styleLose });
-            moneyText.anchor.set(0.5);
-            moneyText.scale.set(0.7);
-            moneyText.x = centerProps.x;
-            moneyText.y = centerProps.y + 40; 
-            this.cardContainer.addChild(moneyText);
-            this.resultTexts.push(moneyText);
-        }
-        
         this.cardContainer.addChild(typeText);
         this.resultTexts.push(typeText);
     }
 
-    if (totalNetProfit > 0) {
+    // Win Effect
+    if (winningZones.length > 0) {
         this.coinRain.play();
     }
 
-    if (this.onBalanceChange) {
-        this.onBalanceChange(totalPayout);
-    }
-    
     if (this.onWinZones) {
         this.onWinZones(winningZones);
     }
 
-    const firstWin = compareHands(pResults[0], bResult) > 0;
+    const firstWin = winners.tian;
     this.history.push({ winner: firstWin ? 'player' : 'banker', type: pResults[0].label.substring(0,2) });
     if(this.onHistoryChange) this.onHistoryChange([...this.history]);
 

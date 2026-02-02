@@ -1,285 +1,245 @@
-import React, { useState } from 'react';
+import React from 'react';
 import useGameStore from '../stores/useGameStore';
 
-const ROOMS = [
-  { id: 'junior', name: '初級廳', min: 100, color: '#4caf50' }, 
-  { id: 'master', name: '中級廳', min: 500, color: '#2196f3' }, 
-  { id: 'vip', name: '高級廳', min: 1000, color: '#9c27b0' },   
-  { id: 'king', name: '至尊廳', min: 5000, color: '#f44336' },  
-];
+// === 1. 引入圖片資源 (確保路徑正確) ===
+import bannerNiuniu from '../assets/buttons/banner_game_niuniu.png';
+import btnNotice from '../assets/buttons/btn_notice.png';
+import btnActivity from '../assets/buttons/btn_activity.png';
+import btnRank from '../assets/buttons/btn_rank.png';
+import btnSettings from '../assets/buttons/btn_settings.png';
+
+// 如果您有大廳背景圖，可以引入；這裡預設使用高級漸層
+// import bgLobby from '../../assets/bg/bg_lobby.png'; 
 
 const Lobby = () => {
-  const { user, enterRoom, logout } = useGameStore(); 
-  const [showRules, setShowRules] = useState(false);
-  const [showDeposit, setShowDeposit] = useState(false);
+  // 從 Store 取得使用者資料與切換頁面功能
+  const { user, setCurrentPage } = useGameStore();
 
-  const handleDeposit = () => {
-    useGameStore.setState(state => ({
-      user: { ...state.user, balance: state.user.balance + 10000 }
-    }));
-    alert("儲值成功！獲得 $10,000");
-    setShowDeposit(false);
+  // 進入遊戲房
+  const handleEnterGame = () => {
+      // 這裡可以加入音效
+      setCurrentPage('room'); 
   };
 
   return (
     <div style={styles.container}>
       
-      {/* 跑馬燈 (背景層) */}
-      <div className="marquee-container" style={{ position: 'absolute', top: 0, zIndex: 1, border: 'none', background:'rgba(0,0,0,0.4)', height: '24px' }}>
-        <div className="marquee-text" style={{ fontSize: '0.8rem', lineHeight: '24px' }}>
-          🔔 公告：恭喜玩家 <span>Jason888</span> 在至尊廳贏得 <span>$52,000</span>！  🎉 尊爵妞妞正式上線！
-        </div>
-      </div>
-
-      {/* --- HUD 頂部區域 --- */}
-      <div style={styles.hudTop}>
-        {/* 左上 */}
-        <div style={styles.hudLeft}>
-            <div style={styles.playerFrame}>
-                <div style={styles.avatar}>{user?.name?.[0]}</div>
-                <div style={styles.playerText}>
-                    <div style={styles.playerName}>{user?.name || 'Guest'}</div>
-                    <div style={styles.playerId}>ID: 888888</div>
-                </div>
+      {/* === 頂部導航欄 === */}
+      <div style={styles.topBar}>
+        
+        {/* 左側：用戶資訊 */}
+        <div style={styles.userInfo}>
+            <div style={styles.avatar}>
+                {/* 顯示用戶名字的第一個字，或預設頭像 */}
+                {user?.name ? user.name[0].toUpperCase() : 'G'}
             </div>
-
-            <div style={styles.balanceFrame}>
-                <div style={{fontSize:'1rem', marginRight:'5px'}}>💰</div>
-                <div style={styles.balanceText}>
-                    {user?.balance?.toLocaleString()}
-                </div>
-                <button onClick={() => setShowDeposit(true)} style={styles.addBtn}>+</button>
+            <div style={styles.userText}>
+                <div style={styles.username}>{user?.name || 'Guest_888'}</div>
+                {/* toLocaleString() 讓數字有千分位逗號 */}
+                <div style={styles.balance}>$ {user?.balance?.toLocaleString() || '10,000'}</div>
             </div>
+            <div style={styles.addBtn}>+</div>
         </div>
 
-        {/* 右上 */}
-        <div style={styles.hudRight}>
-            <div style={styles.iconBtnWrapper}>
-                <button style={styles.roundBtn} onClick={() => alert('公告系統')}>📢</button>
-                <span style={styles.btnLabel}>公告</span>
+        {/* 右側：功能按鈕組 (使用圖片) */}
+        <div style={styles.topBtnGroup}>
+            <div style={styles.iconBtn} onClick={() => alert("公告系統建置中...")}>
+                <img src={btnNotice} alt="公告" style={styles.imgFit} />
             </div>
-            <div style={styles.iconBtnWrapper}>
-                <button style={styles.roundBtn} onClick={() => setShowRules(true)}>⚙️</button>
-                <span style={styles.btnLabel}>設定</span>
+            <div style={styles.iconBtn} onClick={() => alert("活動系統建置中...")}>
+                <img src={btnActivity} alt="活動" style={styles.imgFit} />
+            </div>
+            <div style={styles.iconBtn} onClick={() => alert("排行榜建置中...")}>
+                <img src={btnRank} alt="排行" style={styles.imgFit} />
+            </div>
+            <div style={styles.iconBtn} onClick={() => alert("設定選單")}>
+                <img src={btnSettings} alt="設定" style={styles.imgFit} />
             </div>
         </div>
       </div>
 
-      {/* --- 中間：房間輪播 (垂直置中的核心) --- */}
-      <div style={styles.carouselContainer}>
-        <h2 style={styles.lobbyTitle}>百人妞妞大廳</h2>
-        <div style={styles.carousel}>
-            {ROOMS.map((room) => (
-            <div key={room.id} style={styles.cardWrapper}>
-                <div style={styles.card} onClick={() => enterRoom(room.id)}>
-                <div style={{...styles.cardIcon, background: room.color}}>
-                    {room.name[0]}
-                </div>
-                <h3 style={styles.cardTitle}>{room.name}</h3>
-                <p style={styles.cardMin}>底注 ${room.min}</p>
-                <div style={styles.cardBorderInner}></div>
+      {/* === 中間遊戲列表區 === */}
+      <div style={styles.gameListArea}>
+        <div style={styles.scrollContainer}>
+            
+            {/* 核心：百人妞妞入口 */}
+            <div 
+                style={styles.gameCard} 
+                onClick={handleEnterGame}
+            >
+                <img src={bannerNiuniu} alt="百人妞妞" style={styles.gameBanner} />
+                {/* 光暈特效框 */}
+                <div style={styles.glowEffect}></div>
+            </div>
+
+            {/* 佔位符：敬請期待 (讓畫面不那麼空) */}
+            <div style={{...styles.gameCard, ...styles.comingSoonCard}}>
+                <div style={styles.comingSoonText}>
+                    <span>🚀 更多遊戲<br/>Coming Soon</span>
                 </div>
             </div>
-            ))}
+
         </div>
       </div>
 
-      {/* --- HUD 底部區域 --- */}
-      <div style={styles.hudBottom}>
-          <button style={styles.bigGoldBtn} onClick={() => alert('戰績功能')}>
-             📜 戰績
-          </button>
-
-          <div style={{display:'flex', gap:'10px'}}>
-              <button style={styles.bigGoldBtn} onClick={() => alert('排行榜')}>🏆 排行榜</button>
-              <button style={styles.bigGoldBtn} onClick={() => alert('活動')}>📅 活動</button>
-          </div>
+      {/* 底部跑馬燈 (選配) */}
+      <div style={styles.marqueeBar}>
+          📢 恭喜玩家 <span>Jason888</span> 在百人妞妞贏得 <span>$52,000</span>！ 🎉 祝您遊戲愉快！
       </div>
-
-      {/* --- Modals --- */}
-      {showRules && (
-        <div style={styles.modalOverlay} onClick={() => setShowRules(false)}>
-          <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
-            <h3 style={styles.modalTitle}>📜 遊戲規則</h3>
-            <div style={styles.ruleTable}>
-                <div style={styles.ruleRow}><span>牛牛 x3</span> <span>牛七~九 x2</span></div>
-                <div style={styles.ruleRow}><span>牛一~六 x1</span> <span>無牛 x1</span></div>
-            </div>
-            <button onClick={logout} style={{...styles.closeBtn, background:'#d32f2f', marginTop:'10px'}}>登出帳號</button>
-            <button onClick={() => setShowRules(false)} style={styles.closeBtn}>關閉</button>
-          </div>
-        </div>
-      )}
-
-      {showDeposit && (
-        <div style={styles.modalOverlay} onClick={() => setShowDeposit(false)}>
-          <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
-            <h3 style={styles.modalTitle}>💰 補幣中心</h3>
-            <div style={{margin:'20px 0', fontSize:'2rem', color:'#f1c40f'}}>$ 10,000</div>
-            <button onClick={handleDeposit} style={styles.closeBtn}>領取</button>
-          </div>
-        </div>
-      )}
 
     </div>
   );
 };
 
-// --- CSS Styles (完全響應式 vh/vw 單位) ---
+// === CSS Styles (RWD) ===
 const styles = {
   container: {
     width: '100vw',
-    height: '100dvh', // 使用 dynamic viewport height
-    background: 'var(--bg-radial-black)',
-    backgroundSize: 'cover',
+    height: '100vh',
+    // 深綠色高級背景漸層 (模擬賭桌氛圍)
+    background: 'radial-gradient(circle at 50% -20%, #1b5e20 0%, #000000 100%)',
+    display: 'flex',
+    flexDirection: 'column',
     position: 'relative',
     overflow: 'hidden',
   },
-  
-  // HUD Top Layer
-  hudTop: {
-    position: 'absolute',
-    top: '30px',  // 避開跑馬燈
-    left: 0, width: '100%',
-    padding: '0 20px', // 左右邊距
-    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-    zIndex: 10, pointerEvents: 'none',
+  topBar: {
+    height: '80px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '0 20px', // 手機版左右留白
+    background: 'linear-gradient(180deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%)',
+    zIndex: 10,
   },
-  hudLeft: { display: 'flex', gap: '10px', pointerEvents: 'auto', alignItems: 'flex-start' },
-  hudRight: { display: 'flex', gap: '15px', pointerEvents: 'auto' },
-
-  // 縮小一點的玩家框 (適配手機)
-  playerFrame: {
-    background: 'linear-gradient(180deg, rgba(60,40,10,0.95) 0%, rgba(30,20,5,0.95) 100%)',
-    border: '1px solid #d4af37', borderRadius: '8px',
-    padding: '4px 10px 4px 4px',
-    display: 'flex', alignItems: 'center', gap: '8px',
-    boxShadow: '0 2px 5px rgba(0,0,0,0.5)',
-    height: '40px', // 固定高度避免跑版
+  
+  // 用戶資訊區塊
+  userInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    background: 'rgba(0,0,0,0.6)', // 半透明黑底
+    padding: '5px 12px',
+    borderRadius: '30px',
+    border: '1px solid #ffd700', // 金框
+    gap: '10px',
+    boxShadow: '0 4px 10px rgba(0,0,0,0.5)',
   },
   avatar: {
-    width: '32px', height: '32px', background: '#444', borderRadius: '6px',
-    border: '1px solid #aaa', display: 'flex', justifyContent: 'center', alignItems: 'center',
-    color: '#fff', fontWeight:'bold', fontSize: '0.9rem',
-  },
-  playerText: { display: 'flex', flexDirection: 'column', justifyContent: 'center' },
-  playerName: { color: '#fff', fontWeight:'bold', fontSize:'0.9rem', lineHeight: '1' },
-  playerId: { color: '#aaa', fontSize:'0.7rem', lineHeight: '1', marginTop:'2px' },
-
-  balanceFrame: {
-    background: 'rgba(0,0,0,0.7)', border: '1px solid #d4af37', borderRadius: '20px',
-    padding: '0 4px 0 12px',
-    display: 'flex', alignItems: 'center',
-    height: '40px', // 與玩家框等高
-    boxShadow: '0 2px 5px rgba(0,0,0,0.5)',
-  },
-  balanceText: { color:'#f1c40f', fontWeight:'bold', fontSize:'0.9rem', minWidth:'60px' },
-  addBtn: {
-    width: '26px', height: '26px', borderRadius: '50%',
-    background: 'linear-gradient(180deg, #f1c40f 0%, #d35400 100%)',
-    border: '1px solid #fff', color: '#fff', fontWeight: 'bold', cursor: 'pointer',
-    display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1rem', marginLeft: '8px',
-  },
-
-  iconBtnWrapper: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  roundBtn: {
-    width: '36px', height: '36px', borderRadius: '50%', // 縮小按鈕
-    background: 'linear-gradient(135deg, #444 0%, #222 100%)',
-    border: '1px solid #d4af37', color: '#fff', fontSize: '1.2rem',
-    cursor: 'pointer', boxShadow: '0 2px 5px rgba(0,0,0,0.6)',
-  },
-  btnLabel: { color: '#d4af37', fontSize: '0.6rem', marginTop: '2px', fontWeight: 'bold' },
-
-  // --- 核心修正區：Carousel (使用 vh 單位) ---
-  carouselContainer: {
-    position: 'absolute',
-    top: '55%', left: 0, width: '100%',
-    transform: 'translateY(-50%)', // 垂直置中
-    zIndex: 5,
-    display: 'flex', flexDirection: 'column', justifyContent: 'center',
-  },
-  lobbyTitle: {
-    textAlign: 'center', color: '#f1c40f',
-    textShadow: '0 2px 5px rgba(0,0,0,0.8)',
-    marginBottom: '5px', 
-    fontSize: '1.2rem', // 標題縮小
-    letterSpacing: '1px',
-  },
-  carousel: {
+    width: '38px',
+    height: '38px',
+    borderRadius: '50%',
+    background: 'linear-gradient(135deg, #ffd700 0%, #ff8f00 100%)', // 金色頭像底
     display: 'flex',
-    overflowX: 'auto',
-    scrollSnapType: 'x mandatory',
-    gap: '15px',
-    padding: '10px 40px', // 減少 padding
+    justifyContent: 'center',
     alignItems: 'center',
-    scrollbarWidth: 'none',
+    fontSize: '1.2rem',
+    fontWeight: 'bold',
+    color: '#3e2723',
+    border: '2px solid #fff',
   },
-  cardWrapper: {
-    // 🔥 關鍵修正：卡片高度設為螢幕高度的 50%
-    height: '50vh', 
-    // 🔥 關鍵修正：寬度設為高度的 70% (保持長方形比例)
-    minWidth: '35vh', 
-    scrollSnapAlign: 'center',
-    perspective: '1000px',
+  userText: {
+    display: 'flex',
+    flexDirection: 'column',
   },
-  card: {
-    width: '100%', height: '100%',
-    background: 'linear-gradient(160deg, #1a4d2e 0%, #0d2615 100%)',
-    border: '2px solid #d4af37', borderRadius: '12px',
-    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-    position: 'relative', cursor: 'pointer',
-    boxShadow: '0 5px 15px rgba(0,0,0,0.6)',
+  username: { color: '#ccc', fontSize: '0.75rem', lineHeight:'1.2' },
+  balance: { color: '#ffd700', fontSize: '1.1rem', fontWeight: 'bold', lineHeight:'1.2' },
+  addBtn: {
+    width: '24px', height: '24px', borderRadius: '50%',
+    background: '#00c853', color:'#fff', fontWeight:'bold',
+    display:'flex', justifyContent:'center', alignItems:'center',
+    cursor:'pointer', fontSize:'1.2rem', marginLeft:'5px'
   },
-  cardBorderInner: {
-    position: 'absolute', inset: '4px',
-    border: '1px solid rgba(212, 175, 55, 0.3)', borderRadius: '8px', pointerEvents: 'none',
+  
+  // 右上按鈕群
+  topBtnGroup: {
+    display: 'flex',
+    gap: '12px',
   },
-  cardIcon: { 
-    fontSize: '2.5rem', // 圖示縮小 
-    marginBottom: '5px', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))' 
+  iconBtn: {
+    width: '42px', // 按鈕大小
+    height: '42px',
+    cursor: 'pointer',
+    transition: 'transform 0.1s',
+    filter: 'drop-shadow(0 4px 5px rgba(0,0,0,0.5))', // 陰影讓按鈕立體
   },
-  cardTitle: { 
-    color: '#f1c40f', fontSize: '1.2rem', // 字體縮小
-    marginBottom: '2px', textShadow: '0 2px 4px #000' 
+  imgFit: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain',
   },
-  cardMin: { color: '#ccc', fontSize: '0.8rem' },
 
-  // HUD Bottom Layer
-  hudBottom: {
+  // 中間捲動區
+  gameListArea: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center', 
+    paddingBottom: '20px',
+  },
+  scrollContainer: {
+    display: 'flex',
+    gap: '30px',
+    alignItems: 'center',
+    padding: '20px',
+    overflowX: 'auto', // 支援橫向滑動
+    width: '100%',
+    justifyContent: 'center',
+  },
+  
+  // 遊戲卡片 (Banner)
+  gameCard: {
+    position: 'relative',
+    width: '300px', // Banner 寬度
+    height: '160px', // Banner 高度
+    borderRadius: '15px',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+  gameBanner: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain', 
+    filter: 'drop-shadow(0 10px 20px rgba(0,0,0,0.6))', // 讓 Banner 浮起來
+  },
+  glowEffect: {
     position: 'absolute',
-    bottom: '15px', left: 0, width: '100%',
-    padding: '0 20px',
-    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
-    pointerEvents: 'none', zIndex: 10,
+    inset: -5,
+    borderRadius: '20px',
+    border: '2px solid rgba(255, 215, 0, 0)', // 預設透明
+    transition: 'all 0.3s',
   },
-  bigGoldBtn: {
-    pointerEvents: 'auto',
-    background: 'linear-gradient(180deg, #f1c40f 0%, #b8860b 100%)',
-    border: '1px solid #fff5c0', borderRadius: '10px', 
-    padding: '8px 20px', // 按鈕變扁一點
-    color: '#3e2723', fontWeight: 'bold', fontSize: '0.9rem',
-    boxShadow: '0 4px 0 #8b6508, 0 5px 5px rgba(0,0,0,0.5)', cursor: 'pointer',
-    display: 'flex', alignItems: 'center', gap: '5px',
+  
+  // Coming Soon 卡片樣式
+  comingSoonCard: {
+    opacity: 0.6,
+    cursor: 'not-allowed',
+    width: '140px', // 比較小一點
+    height: '140px',
+  },
+  comingSoonText: {
+    width: '100%',
+    height: '100%',
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: '15px',
+    border: '2px dashed #666',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    color: '#aaa',
+    textAlign: 'center',
+    fontSize: '0.9rem',
+    fontWeight: 'bold',
   },
 
-  // Modal 樣式 (不變)
-  modalOverlay: {
-    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-    background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(5px)',
-    zIndex: 999, display: 'flex', justifyContent: 'center', alignItems: 'center',
-  },
-  modalContent: {
-    width: '85%', maxWidth: '350px',
-    background: '#222', border: '2px solid #d4af37', borderRadius: '15px',
-    padding: '20px', textAlign: 'center', boxShadow: '0 0 30px rgba(212,175,55,0.2)',
-  },
-  modalTitle: { color: '#f1c40f', borderBottom:'1px solid #444', paddingBottom:'10px', margin:'0 0 15px 0' },
-  ruleTable: { background: '#111', padding: '10px', borderRadius: '8px' },
-  ruleRow: { display:'flex', justifyContent:'space-between', color:'#ccc', marginBottom:'8px', borderBottom:'1px dashed #333', paddingBottom:'4px'},
-  closeBtn: {
-    width: '100%', padding: '10px', marginTop: '20px',
-    background: 'linear-gradient(180deg, #f1c40f 0%, #b8860b 100%)',
-    border: 'none', borderRadius: '8px', color: '#3e2723', fontWeight: 'bold', cursor:'pointer'
+  // 底部跑馬燈
+  marqueeBar: {
+    height: '30px',
+    background: 'rgba(0,0,0,0.5)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color: '#fff', fontSize: '0.8rem',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    borderTop: '1px solid #333',
   }
 };
 
