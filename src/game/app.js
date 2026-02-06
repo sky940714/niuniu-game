@@ -1,4 +1,4 @@
-import { Application, Assets, Sprite, Text, TextStyle, Container, Texture } from 'pixi.js';
+import { Application, Assets, Sprite, Text, TextStyle, Container, Texture, Rectangle,} from 'pixi.js'; 
 import { SqueezeController } from './SqueezeController';
 import { CoinRain } from './Effects';
 import gsap from 'gsap';
@@ -179,41 +179,29 @@ class GameApp {
         await this.dealRound(bankerHand, playersHands, bResult, pResults);
     }
 
-    // 修改後的 getFanCardProps (配合你的新 UI 位置)
-getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
+    getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
         const w = this.app.screen.width;
         const h = this.app.screen.height;
 
-        // --- 🔥 1. 設定垂直位置 ---
-        // 莊家維持在上方 15%，閒家維持在 54%
         let centerY = (zoneIndex === -1) ? h * 0.15 : h * 0.54; 
 
-        // --- 🔥 2. 設定水平位置 (關鍵修改) ---
         let centerX;
         if (zoneIndex === -1) { 
             centerX = w / 2; 
         } else { 
-            // 🔧 [調整這裡]：控制門與門之間的距離 (原本約 0.168)
-            // 因為牌變大 (1.6倍)，建議加大到 0.20 (螢幕寬度的 20%) 或 0.22
             const GAP_RATE = 0.20; 
-
-            // 📐 自動置中公式：
-            // 螢幕中心 (0.5) - (1.5 * 間距) = 第一門(天)的位置
-            // 這樣無論 GAP_RATE 設多少，四門永遠會以螢幕中心對稱排列
             const startX = w * (0.5 - (1.5 * GAP_RATE)); 
             const gap = w * GAP_RATE;   
-            
             centerX = startX + (zoneIndex * gap); 
         }
     
-    // --- 3. 扇形展開角度 (維持不變) ---
-    const spreadAngle = 0.1; 
-    const centerIndex = (totalCards - 1) / 2;
-    const angle = (cardIndex - centerIndex) * spreadAngle;
-    const xOffset = (cardIndex - centerIndex) * 23; // 牌距
-    
-    return { x: centerX + xOffset, y: centerY, rotation: angle };
-}
+        const spreadAngle = 0.1; 
+        const centerIndex = (totalCards - 1) / 2;
+        const angle = (cardIndex - centerIndex) * spreadAngle;
+        const xOffset = (cardIndex - centerIndex) * 23; 
+        
+        return { x: centerX + xOffset, y: centerY, rotation: angle };
+    }
 
     async dealRound(bankerHand, playersHands, bResult, pResults) {
         const w = this.app.screen.width;
@@ -248,8 +236,16 @@ getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
                             // 第五張牌設定為可點擊
                             card.eventMode = 'static';
                             card.cursor = 'pointer';
+                            
+                            // 🔥 [修改] 1. 加大 1.5 倍判定範圍
+                            const baseW = card.texture.width;
+                            const baseH = card.texture.height;
+                            const hitW = baseW * 1.5;
+                            const hitH = baseH * 1.5;
+                            
+                            card.hitArea = new Rectangle(-hitW/2, -hitH/2, hitW, hitH);
                             card.on('pointerdown', (e) => {
-                                e.stopPropagation(); // 防止事件穿透
+                                e.stopPropagation(); 
                                 this.handleSqueezeClick(card, playersHands[zoneIdx][round], zoneIdx);
                             });
                         }
@@ -277,23 +273,23 @@ getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
         cardSprite.eventMode = 'none';
         cardSprite.visible = false;
 
-        // 1. 進入咪牌狀態：通知 UI 隱藏，提升畫布層級
         if (this.onSqueezeStateChange) this.onSqueezeStateChange(true, 0); 
         
-        // 🔥 [修改] 同時提升 Canvas 與 父容器 的層級
-        // 因為 React 的 UI (如按鈕) zIndex 可能高達 30-50，只改 canvas 是不夠的
         if (this.parentElement) this.parentElement.style.zIndex = '2000';
         this.app.canvas.style.zIndex = '2000'; 
         this.app.canvas.style.pointerEvents = 'auto';
 
-        // 2. 呼叫 SqueezeController 開始咪牌
         this.squeezeCtrl.start(cardData.texture, () => {
-            // 3. 咪牌完成回調
-            cardSprite.texture = Texture.from(cardData.texture);
-            cardSprite.visible = true;
+            if (cardData && cardData.texture) {
+                cardSprite.texture = Texture.from(cardData.texture);
+            }
+            cardSprite.visible = true; 
             
-            // 🔥 [修改] 恢復原本層級 (這裡假設原本父容器是 auto 或 5)
-            if (this.parentElement) this.parentElement.style.zIndex = ''; 
+            // 移除除錯用的紅框 (如果有加的話)，避免開牌後還看得到
+            // 這裡會移除 cardSprite 所有子元件(包含 debugRect)
+            cardSprite.removeChildren();
+
+            if (this.parentElement) this.parentElement.style.zIndex = '5'; 
             this.app.canvas.style.zIndex = '5'; 
             this.app.canvas.style.pointerEvents = 'auto'; 
             
@@ -331,24 +327,39 @@ getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
         const styleWin = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#f1c40f', stroke: '#000', strokeThickness: 4 });
         const styleLose = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#bdc3c7', stroke: '#000', strokeThickness: 4 });
 
+        // --- 1. 處理莊家 (Banker) 文字位置 ---
         const bRes = this.serverResult.results.banker;
         const bLabel = bRes.niu === 10 ? "牛牛" : (bRes.niu > 0 ? `牛${bRes.niu}` : "無牛");
         const bankerText = new Text({ text: bLabel, style: styleWin });
+        
+        // 取得莊家第 3 張牌的位置作為基準點
         const bPos = this.getFanCardProps(-1, 2);
         bankerText.anchor.set(0.5);
-        bankerText.x = bPos.x; bankerText.y = bPos.y - 100;
+
+        // 🔥 [修改這裡] 莊家文字位置
+        bankerText.x = bPos.x + 140;   // ↔️ 左右：若要往右改 +20，往左改 -20
+        bankerText.y = bPos.y + 0;  // ↕️ 上下：若要更靠近牌改 +0，更下面改 +80
+        
         this.uiLayer.addChild(bankerText);
 
+        // --- 2. 處理閒家 (Player) 文字位置 ---
         for(let i=0; i<4; i++) {
             const key = winnerKeys[i];
             const isWin = winners[key];
             if (isWin) winningZones.push(i);
+            
             const pRes = this.serverResult.results[key];
             const pLabel = pRes.niu === 10 ? "牛牛" : (pRes.niu > 0 ? `牛${pRes.niu}` : "無牛");
             const typeText = new Text({ text: pLabel, style: isWin ? styleWin : styleLose });
+            
+            // 取得該閒家第 3 張牌的位置作為基準點
             const pPos = this.getFanCardProps(i, 2);
             typeText.anchor.set(0.5);
-            typeText.x = pPos.x; typeText.y = pPos.y + 100;
+
+            // 🔥 [修改這裡] 閒家文字位置
+            typeText.x = pPos.x + 0;    // ↔️ 左右：建議改 +5 或 -5 微調置中
+            typeText.y = pPos.y + 100;  // ↕️ 上下：目前是 +100 (牌下方)，若要蓋在牌中間改 +40
+
             this.uiLayer.addChild(typeText);
         }
 

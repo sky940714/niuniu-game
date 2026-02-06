@@ -257,7 +257,7 @@ const GameUI = () => {
                             ? 'rgba(255, 215, 0, 0.4)'  // 🏆 贏牌時：金色，亮度提升到 0.4 (明顯發亮)
                             : 'rgba(0, 0, 0, 0.05)',    // 🌑 平常時：黑色，透明度僅 0.05 (只有一咪咪底色，幾乎透明)
                           boxShadow: isWinner ? '0 0 20px rgba(255, 215, 0, 0.6), inset 0 0 20px rgba(255, 215, 0, 0.3)' : 'none',
-                          pointerEvents: 'auto', 
+                          pointerEvents: isBettingPhase ? 'auto' : 'none',
                           opacity: (!isBettingPhase) ? 0.7 : 1, 
                       }}
                       onClick={() => handleBetZone(zone.id)}
@@ -347,6 +347,7 @@ const styles = {
     backgroundSize: 'cover',
     backgroundPosition: 'center',
     zIndex: 1, // 最底層
+    pointerEvents: 'none',
   },
   container: { 
       position: 'absolute', 
