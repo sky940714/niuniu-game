@@ -26,11 +26,13 @@ const CHIPS = [
   { val: 10000, img: chip10000Img }, 
 ];
 
+// 🔥 修改重點 1：在這裡調整每個區域的座標 (top, left) 與大小 (width, height)
+// 數值為相對於螢幕的百分比，請依照你的背景圖進行微調
 const ZONES = [
-  { id: 0, label: '天', color: '#e91e63' },
-  { id: 1, label: '地', color: '#2196f3' },
-  { id: 2, label: '玄', color: '#ff9800' },
-  { id: 3, label: '黃', color: '#9c27b0' },
+  { id: 0,   top: '30%', left: '17%', width: '14%', height: '48%' },
+  { id: 1,   top: '30%', left: '33.8%', width: '14%', height: '48%' },
+  { id: 2,   top: '30%', left: '50.6%', width: '14%', height: '48%' },
+  { id: 3,   top: '30%', left: '67.25%', width: '14%', height: '48%' },
 ];
 
 const PHASES = {
@@ -234,7 +236,7 @@ const GameUI = () => {
             </div>
         </div>
 
-        {/* Betting Zones */}
+        {/* Betting Zones - 🔥 修改重點 3：應用絕對定位 */}
         <div style={styles.tableCenterArea}>
             {ZONES.map((zone) => {
                 const isWinner = winZones.includes(zone.id);
@@ -243,8 +245,17 @@ const GameUI = () => {
                       key={zone.id} 
                       style={{
                           ...styles.bettingZone, 
+                          // 👇 這裡應用個別定位
+                          position: 'absolute',
+                          top: zone.top,
+                          left: zone.left,
+                          width: zone.width,
+                          height: zone.height,
+                          // 👆
                           borderColor: isWinner ? '#ffd700' : (currentBets[zone.id] > 0 ? '#f1c40f' : 'rgba(255,255,255,0.1)'),
-                          backgroundColor: isWinner ? 'rgba(255, 215, 0, 0.2)' : (!isBettingPhase ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.15)'),
+                          backgroundColor: isWinner 
+                            ? 'rgba(255, 215, 0, 0.4)'  // 🏆 贏牌時：金色，亮度提升到 0.4 (明顯發亮)
+                            : 'rgba(0, 0, 0, 0.05)',    // 🌑 平常時：黑色，透明度僅 0.05 (只有一咪咪底色，幾乎透明)
                           boxShadow: isWinner ? '0 0 20px rgba(255, 215, 0, 0.6), inset 0 0 20px rgba(255, 215, 0, 0.3)' : 'none',
                           pointerEvents: 'auto', 
                           opacity: (!isBettingPhase) ? 0.7 : 1, 
@@ -367,8 +378,31 @@ const styles = {
   timerCircle: { width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(0,0,0,0.6)', border: '2px solid #f1c40f', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', boxShadow: '0 0 20px rgba(241, 196, 15, 0.4)' },
   timerNum: { fontSize: '2rem', color: '#f1c40f', fontWeight: 'bold', lineHeight: '1' },
   timerLabel: { fontSize: '0.7rem', color: '#fff', marginTop: '2px' },
-  tableCenterArea: { position: 'absolute', top: '45%', left: '50%', transform: 'translate(-50%, -50%)', width: '98%', display: 'flex', justifyContent: 'center', gap: '5px', pointerEvents: 'none', zIndex: 1 },
-  bettingZone: { flex: 1, height: '220px', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '10px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'center', position: 'relative', cursor: 'pointer', paddingTop: '5px', pointerEvents: 'auto' },
+  
+  // 🔥 修改重點 2：這裡改為全螢幕覆蓋，方便計算絕對座標
+  tableCenterArea: { 
+      position: 'absolute', 
+      top: 0, 
+      left: 0, 
+      width: '100%', 
+      height: '100%', 
+      pointerEvents: 'none', // 重要！否則會擋住下面的按鈕
+      zIndex: 1 
+  },
+  
+  // 這裡移除了高度限制，讓它完全依賴 ZONES 裡的 height
+  bettingZone: { 
+      border: '1px solid rgba(255,255,255,0.2)', 
+      borderRadius: '10px', 
+      display: 'flex', 
+      flexDirection: 'column', 
+      justifyContent: 'flex-start', 
+      alignItems: 'center', 
+      position: 'relative', 
+      cursor: 'pointer', 
+      paddingTop: '5px', 
+      pointerEvents: 'auto' 
+  },
   zoneLabel: { fontSize: '1.8rem', fontWeight: 'bold', fontFamily: 'serif', marginBottom: '2px', textShadow:'0 2px 4px #000' },
   zoneRate: { color: '#aaa', fontSize: '0.7rem', border: '1px solid #555', padding: '2px 4px', borderRadius: '6px' },
   zoneTotalBet: { marginTop: 'auto', marginBottom: '5px', color: '#f1c40f', fontWeight: 'bold', fontSize: '0.9rem', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: '4px' },

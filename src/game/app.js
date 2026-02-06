@@ -24,7 +24,7 @@ class GameApp {
         this.bankerSprites = []; 
         this.playerSprites = [[], [], [], []]; 
         
-        this.cardScale = 0.55; 
+        this.cardScale = 1.6; 
         this.squeezedMap = {}; 
         this.targetHands = null;
         this.serverResult = null;
@@ -36,6 +36,8 @@ class GameApp {
             this.destroy();
         }
 
+        this.parentElement = containerElement;
+
         this.app = new Application();
         await this.app.init({
             backgroundAlpha: 0,
@@ -44,6 +46,8 @@ class GameApp {
             autoDensity: true,
             antialias: true,
         });
+
+        this.app.stage.sortableChildren = true;
         
         containerElement.appendChild(this.app.canvas);
         this.app.canvas.style.position = 'absolute';
@@ -175,23 +179,41 @@ class GameApp {
         await this.dealRound(bankerHand, playersHands, bResult, pResults);
     }
 
-    getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
+    // 修改後的 getFanCardProps (配合你的新 UI 位置)
+getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
         const w = this.app.screen.width;
         const h = this.app.screen.height;
-        const gap = w / 4.2;
-        const startOffset = (w - (gap * 3)) / 2;
-        let centerX, centerY;
+
+        // --- 🔥 1. 設定垂直位置 ---
+        // 莊家維持在上方 15%，閒家維持在 54%
+        let centerY = (zoneIndex === -1) ? h * 0.15 : h * 0.54; 
+
+        // --- 🔥 2. 設定水平位置 (關鍵修改) ---
+        let centerX;
         if (zoneIndex === -1) { 
-            centerX = w / 2; centerY = h * 0.25; 
+            centerX = w / 2; 
         } else { 
-            centerX = startOffset + (zoneIndex * gap); centerY = h * 0.58; 
+            // 🔧 [調整這裡]：控制門與門之間的距離 (原本約 0.168)
+            // 因為牌變大 (1.6倍)，建議加大到 0.20 (螢幕寬度的 20%) 或 0.22
+            const GAP_RATE = 0.20; 
+
+            // 📐 自動置中公式：
+            // 螢幕中心 (0.5) - (1.5 * 間距) = 第一門(天)的位置
+            // 這樣無論 GAP_RATE 設多少，四門永遠會以螢幕中心對稱排列
+            const startX = w * (0.5 - (1.5 * GAP_RATE)); 
+            const gap = w * GAP_RATE;   
+            
+            centerX = startX + (zoneIndex * gap); 
         }
-        const spreadAngle = 0.1; 
-        const centerIndex = (totalCards - 1) / 2;
-        const angle = (cardIndex - centerIndex) * spreadAngle;
-        const xOffset = (cardIndex - centerIndex) * 22; 
-        return { x: centerX + xOffset, y: centerY, rotation: angle };
-    }
+    
+    // --- 3. 扇形展開角度 (維持不變) ---
+    const spreadAngle = 0.1; 
+    const centerIndex = (totalCards - 1) / 2;
+    const angle = (cardIndex - centerIndex) * spreadAngle;
+    const xOffset = (cardIndex - centerIndex) * 23; // 牌距
+    
+    return { x: centerX + xOffset, y: centerY, rotation: angle };
+}
 
     async dealRound(bankerHand, playersHands, bResult, pResults) {
         const w = this.app.screen.width;
@@ -257,7 +279,11 @@ class GameApp {
 
         // 1. 進入咪牌狀態：通知 UI 隱藏，提升畫布層級
         if (this.onSqueezeStateChange) this.onSqueezeStateChange(true, 0); 
-        this.app.canvas.style.zIndex = '2000'; // 確保在所有 UI 之上
+        
+        // 🔥 [修改] 同時提升 Canvas 與 父容器 的層級
+        // 因為 React 的 UI (如按鈕) zIndex 可能高達 30-50，只改 canvas 是不夠的
+        if (this.parentElement) this.parentElement.style.zIndex = '2000';
+        this.app.canvas.style.zIndex = '2000'; 
         this.app.canvas.style.pointerEvents = 'auto';
 
         // 2. 呼叫 SqueezeController 開始咪牌
@@ -266,9 +292,10 @@ class GameApp {
             cardSprite.texture = Texture.from(cardData.texture);
             cardSprite.visible = true;
             
-            // 恢復原本層級與穿透
+            // 🔥 [修改] 恢復原本層級 (這裡假設原本父容器是 auto 或 5)
+            if (this.parentElement) this.parentElement.style.zIndex = ''; 
             this.app.canvas.style.zIndex = '5'; 
-            this.app.canvas.style.pointerEvents = 'auto'; // 發牌完仍保持 auto 才能點下一張，直到 settleAll 結束
+            this.app.canvas.style.pointerEvents = 'auto'; 
             
             if (this.onSqueezeStateChange) this.onSqueezeStateChange(false);
             gsap.fromTo(cardSprite.scale, {x: 1.1, y: 1.1}, {x: this.cardScale, y: this.cardScale, duration: 0.2});
