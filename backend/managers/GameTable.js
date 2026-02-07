@@ -24,7 +24,6 @@ class GameTable {
         this.startGameLoop();
 
         // 伺服器剛啟動的第一局，先發牌並讓機器人進場
-        // 這樣第一局才有牌可以看
         this.generateResult(); 
         botManager.prepareBotsForRound();
         botManager.startBettingRoutine();
@@ -39,15 +38,19 @@ class GameTable {
     async tick() {
         this.countdown--;
 
-        // 🔥 [修改] 倒數剩 5 秒時：只做鎖定，不重新發牌
-        // 因為牌在 resetGame() 時已經發好了
-        if (this.phase === PHASES.BETTING && this.countdown === 5) { // 這裡建議對應 TIMING.LOCK_BEFORE_END
+        // [修改] 倒數剩 5 秒時：只做鎖定，不重新發牌
+        if (this.phase === PHASES.BETTING && this.countdown === 5) { 
             this.isBetLocked = true;
-            
-            // 通知前端：鎖住籌碼，顯示停止下注
             this.io.emit('bet_lock', { lock: true }); 
-            
             console.log("🔒 [System] 下注鎖定 (剩5秒)");
+        }
+
+        // --- 修改點 3：在下注過程中，將牌局結果發送到 'admin_update'，讓莊家後台即時可見 ---
+        // 判斷如果是下注階段，則額外發送資訊給後台
+        if (this.phase === PHASES.BETTING) {
+            this.io.emit('admin_update', {
+                roundResult: this.roundResult // 這裡包含了預先產生的牌型與點數
+            });
         }
 
         // 每秒廣播時間
@@ -66,34 +69,26 @@ class GameTable {
     async nextPhase() {
         switch (this.phase) {
             case PHASES.BETTING:
-                // 1. 下注結束 -> 開始發牌
-                // 🔥 [修正] 這裡絕對不能再 call generateResult()
-                // 因為結果早在 18 秒前就決定好了 (甚至被後台換過了)
-                
                 this.phase = PHASES.DEALING;
                 this.countdown = TIMING.DEALING_DURATION;
                 break;
 
             case PHASES.DEALING:
-                // 2. 發牌結束 -> 開始瞇牌
                 this.phase = PHASES.SQUEEZING;
                 this.countdown = TIMING.SQUEEZING_DURATION;
                 break;
 
             case PHASES.SQUEEZING:
-                // 3. 瞇牌結束 -> 展示結果並派彩
                 this.phase = PHASES.RESULT;
                 this.countdown = TIMING.RESULT_DURATION;
-                await this.settleBets(); // 結算派彩
+                await this.settleBets(); 
                 break;
 
             case PHASES.RESULT:
-                // 4. 展示結束 -> 新局開始
                 this.resetGame();
                 break;
         }
 
-        // 廣播階段變更
         this.io.emit('phase_change', {
             phase: this.phase,
             countdown: this.countdown,
@@ -101,7 +96,7 @@ class GameTable {
         });
     }
 
-    // 🎴 產生牌局結果
+    // --- 修改點 1 & 2：在產生結果時，處理中文花色與牌型名稱 ---
     generateResult() {
         try {
             const deck = gameLogic.createDeck();
@@ -113,7 +108,6 @@ class GameTable {
                 huang:  deck.slice(20, 25),
             };
             
-            // 計算點數
             const results = {
                 banker: gameLogic.calculateHand(hands.banker),
                 tian:   gameLogic.calculateHand(hands.tian),
@@ -122,7 +116,32 @@ class GameTable {
                 huang:  gameLogic.calculateHand(hands.huang),
             };
 
-            // 判斷輸贏
+            // [修正] 配合 logic.js 的 s,h,d,c 與 rank 1-13
+            const toChineseCards = (hand) => {
+                const suitMap = { 's': '♠', 'h': '♥', 'd': '♦', 'c': '♣' }; 
+                const rankMap = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K' };
+                return hand.map(card => {
+                    const rankStr = rankMap[card.rank] || card.rank;
+                    return `${suitMap[card.suit] || card.suit}${rankStr}`;
+                });
+            };
+
+            // [修正] 配合 logic.js 的 type 與 niu 屬性
+            const getTypeName = (res) => {
+                if (res.type === 'NIU_NIU') return "妞妞";
+                if (res.type === 'FIVE_SMALL') return "五小妞";
+                if (res.type === 'BOMB') return "鐵支妞";
+                if (res.type === 'FULL_HOUSE') return "葫蘆妞";
+                if (res.niu > 0) return `妞${res.niu}`;
+                return "沒妞";
+            };
+
+            // 擴充結果資訊供後台直接顯示
+            Object.keys(results).forEach(key => {
+                results[key].chineseHand = toChineseCards(hands[key]);
+                results[key].typeName = getTypeName(results[key]);
+            });
+
             const winners = {
                 tian: gameLogic.isPlayerWin(results.tian, results.banker),
                 di:   gameLogic.isPlayerWin(results.di, results.banker),
@@ -131,49 +150,67 @@ class GameTable {
             };
 
             this.roundResult = { hands, results, winners };
-            // console.log("🎴 新牌局已生成 (後台可見)");
         } catch (error) {
             console.error("發牌邏輯錯誤:", error);
         }
     }
 
-    // 🔥 [新增] 上帝換牌功能 (給後台 API 呼叫)
-    swapHands(targetA, targetB) {
-        if (!this.roundResult) return false;
+   swapHands(targetA, targetB) {
+        // [新增] 安全檢查，防止崩潰
+        if (!this.roundResult || !this.roundResult.hands[targetA] || !this.roundResult.hands[targetB]) {
+            return false;
+        }
 
         const hands = this.roundResult.hands;
-        
-        // 1. 交換手牌陣列
         const tempHand = hands[targetA];
         hands[targetA] = hands[targetB];
         hands[targetB] = tempHand;
 
-        // 2. 重新計算點數結果
         const results = this.roundResult.results;
         results[targetA] = gameLogic.calculateHand(hands[targetA]);
         results[targetB] = gameLogic.calculateHand(hands[targetB]);
 
-        // 3. 重新判斷輸贏
+        // [修正] 同步更新中文 (邏輯同 generateResult)
+        const toChineseCards = (hand) => {
+            const suitMap = { 's': '♠', 'h': '♥', 'd': '♦', 'c': '♣' };
+            const rankMap = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K' };
+            return hand.map(c => `${suitMap[c.suit] || c.suit}${rankMap[c.rank] || c.rank}`);
+        };
+
+        const getTypeName = (res) => {
+            if (res.type === 'NIU_NIU') return "妞妞";
+            if (res.type === 'FIVE_SMALL') return "五小妞";
+            if (res.type === 'BOMB') return "鐵支妞";
+            if (res.type === 'FULL_HOUSE') return "葫蘆妞";
+            if (res.niu > 0) return `妞${res.niu}`;
+            return "沒妞";
+        };
+        
+        [targetA, targetB].forEach(key => {
+            results[key].chineseHand = toChineseCards(hands[key]);
+            results[key].typeName = getTypeName(results[key]);
+        });
+
         const winners = this.roundResult.winners;
         ['tian', 'di', 'xuan', 'huang'].forEach(zone => {
             winners[zone] = gameLogic.isPlayerWin(results[zone], results.banker);
         });
 
         console.log(`👨‍💻 [Admin] 上帝換牌執行：[${targetA}] <==> [${targetB}]`);
+        
+        // [新增] 立即推播
+        this.io.emit('admin_update', { roundResult: this.roundResult });
+
         return true;
     }
 
-    // 💰 結算派彩
     async settleBets() {
         const sockets = await this.io.fetchSockets();
-        
         for (const socket of sockets) {
             if (!socket.user) continue;
-
             const bets = betManager.getPlayerBet(socket.id);
             let totalWin = 0;
             let hasBet = false;
-
             for (const [zone, amount] of Object.entries(bets)) {
                 if (amount > 0) {
                     hasBet = true;
@@ -184,12 +221,9 @@ class GameTable {
                     }
                 }
             }
-
             if (hasBet && totalWin > 0) {
                 await UserService.updateBalance(socket.user.db_id, totalWin);
-                
                 socket.user.balance += totalWin;
-
                 socket.emit('update_balance', { 
                     balance: socket.user.balance,
                     winAmount: totalWin
@@ -198,22 +232,15 @@ class GameTable {
         }
     }
 
-    // 🔄 重置遊戲
     resetGame() {
         this.phase = PHASES.BETTING;
         this.countdown = TIMING.BETTING_DURATION;
-        
-        // 重置鎖定狀態
         this.isBetLocked = false; 
         this.io.emit('bet_lock', { lock: false });
-
-        // 🔥 [關鍵修改] 新局一開始就先發好牌 (存給後台看，玩家還看不到)
         this.generateResult(); 
         console.log("🆕 新局開始，牌局結果已預先生成");
-
         betManager.reset(); 
         this.io.emit('update_table_bets', { tian: 0, di: 0, xuan: 0, huang: 0 });
-
         botManager.prepareBotsForRound();
         botManager.startBettingRoutine();
     }

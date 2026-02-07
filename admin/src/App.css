@@ -1,73 +1,181 @@
 /* admin/src/App.css */
-body {
-  background-color: #0f172a; /* 深藍底色，比較護眼 */
-  color: #fff;
-  font-family: 'Microsoft JhengHei', sans-serif;
-  padding: 20px;
+
+/* 基礎設定 */
+* {
+  box-sizing: border-box;
 }
 
-.admin-container { max-width: 1200px; margin: 0 auto; text-align: center; }
+body {
+  background-color: #0f172a; /* 深藍底色 */
+  color: #f8fafc;
+  font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  margin: 0;
+  padding: 40px 20px;
+  line-height: 1.6;
+}
 
+.admin-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+h1 {
+  font-size: 2.5rem;
+  margin-bottom: 10px;
+  color: #f59e0b;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.message-log {
+  color: #fbbf24;
+  height: 30px;
+  font-weight: bold;
+  margin-bottom: 20px;
+  font-size: 1.1rem;
+  text-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+}
+
+/* 遊戲盤面佈局 */
 .game-board {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 20px;
-  margin-top: 20px;
+  grid-template-columns: repeat(4, 1fr); /* 電腦端標準四欄 */
+  gap: 25px;
+  margin-top: 30px;
 }
 
+/* 讓莊家排在最上方或跨欄（可選）*/
+.banker-box {
+  grid-column: span 4; /* 莊家橫跨整行，顯得重要 */
+  max-width: 600px;
+  margin: 0 auto 30px auto;
+  border-color: #ef4444 !important;
+  background: linear-gradient(145deg, #450a0a, #1e293b) !important;
+}
+
+/* 區域塊樣式 */
 .zone-box {
   background-color: #1e293b;
-  border: 3px solid #334155;
-  border-radius: 12px;
-  padding: 15px;
+  border: 2px solid #334155;
+  border-radius: 16px;
+  padding: 20px;
   cursor: pointer;
-  transition: 0.2s;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
-.zone-box:hover { background-color: #334155; }
-.zone-box.selected { border-color: #f59e0b; background-color: #451a03; }
-.banker-box { border-color: #ef4444; background-color: #450a0a; }
+.zone-box:hover {
+  transform: translateY(-5px);
+  background-color: #2d3748;
+  border-color: #475569;
+}
 
+.zone-box.selected {
+  border-color: #f59e0b;
+  background-color: #451a03;
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+}
+
+/* 標頭資訊 */
 .zone-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #475569;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
 }
 
-h3 { margin: 0; font-size: 1.2rem; }
+.zone-header h3 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 800;
+}
 
-/* 牛牛結果標籤 */
+/* 牌型標籤 */
 .bull-tag {
   background-color: #10b981;
-  color: #064e3b;
-  padding: 4px 10px;
-  border-radius: 20px;
+  color: #ffffff;
+  padding: 6px 14px;
+  border-radius: 8px;
   font-weight: bold;
-  font-size: 1rem;
+  font-size: 1.1rem;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
 
-/* 簡約卡牌列 */
+/* 卡牌顯示區域 */
 .cards-row-simple {
   display: flex;
-  justify-content: space-between;
-  background: #fff;
-  border-radius: 8px;
-  padding: 10px;
+  justify-content: center;
+  gap: 8px;
+  background: #f1f5f9; /* 淺灰色背景，讓牌面清楚 */
+  border-radius: 12px;
+  padding: 15px 10px;
+  min-height: 80px;
+  align-items: center;
 }
 
-/* 卡牌文字 */
+/* 單張卡牌樣式 */
 .card-simple {
-  font-size: 1.5rem; /* 字體加大 */
-  font-weight: bold;
-  font-family: 'Courier New', monospace; /* 等寬字體讓排列整齊 */
-  width: 35px;
-  text-align: center;
+  background: white;
+  border-radius: 6px;
+  padding: 5px;
+  width: 45px; /* 增加寬度 */
+  height: 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.card-text.red { color: #d32f2f; }
-.card-text.black { color: #000; }
+.card-text {
+  font-size: 1.3rem;
+  font-weight: 900;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
 
-.message-log { color: #f59e0b; height: 24px; font-weight: bold; }
+/* 顏色設定 */
+.red { color: #dc2626; }
+.black { color: #1e293b; }
+
+/* 換牌按鈕區域 (如果有) */
+.action-footer {
+  margin-top: 40px;
+  padding: 20px;
+  background-color: #1e293b;
+  border-radius: 12px;
+}
+
+button {
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+button:hover {
+  background-color: #2563eb;
+}
+
+button:disabled {
+  background-color: #475569;
+  cursor: not-allowed;
+}
+
+/* 響應式：平板或小螢幕調整 */
+@media (max-width: 1024px) {
+  .game-board {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .banker-box {
+    grid-column: span 2;
+  }
+}

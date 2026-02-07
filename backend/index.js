@@ -13,6 +13,7 @@ const UserService = require('./services/userService');
 const botManager = require('./managers/BotManager');
 
 const app = express();
+app.use(express.json());
 app.use(cors({
     origin: [
         "http://localhost:5173", // 玩家前端
