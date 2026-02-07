@@ -1,0 +1,73 @@
+/* admin/src/App.css */
+body {
+  background-color: #0f172a; /* 深藍底色，比較護眼 */
+  color: #fff;
+  font-family: 'Microsoft JhengHei', sans-serif;
+  padding: 20px;
+}
+
+.admin-container { max-width: 1200px; margin: 0 auto; text-align: center; }
+
+.game-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.zone-box {
+  background-color: #1e293b;
+  border: 3px solid #334155;
+  border-radius: 12px;
+  padding: 15px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.zone-box:hover { background-color: #334155; }
+.zone-box.selected { border-color: #f59e0b; background-color: #451a03; }
+.banker-box { border-color: #ef4444; background-color: #450a0a; }
+
+.zone-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #475569;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+
+h3 { margin: 0; font-size: 1.2rem; }
+
+/* 牛牛結果標籤 */
+.bull-tag {
+  background-color: #10b981;
+  color: #064e3b;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: bold;
+  font-size: 1rem;
+}
+
+/* 簡約卡牌列 */
+.cards-row-simple {
+  display: flex;
+  justify-content: space-between;
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+/* 卡牌文字 */
+.card-simple {
+  font-size: 1.5rem; /* 字體加大 */
+  font-weight: bold;
+  font-family: 'Courier New', monospace; /* 等寬字體讓排列整齊 */
+  width: 35px;
+  text-align: center;
+}
+
+.card-text.red { color: #d32f2f; }
+.card-text.black { color: #000; }
+
+.message-log { color: #f59e0b; height: 24px; font-weight: bold; }

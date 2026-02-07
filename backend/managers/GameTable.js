@@ -3,8 +3,6 @@ const { TIMING } = require('../config/gameRules');
 const gameLogic = require('../logic'); 
 const betManager = require('./BetManager');
 const UserService = require('../services/userService');
-
-// 🔥 [新增] 1. 引入 BotManager
 const botManager = require('./BotManager');
 
 const PHASES = {
@@ -20,12 +18,14 @@ class GameTable {
         this.phase = PHASES.BETTING;
         this.countdown = TIMING.BETTING_DURATION;
         this.roundResult = null; 
+        this.isBetLocked = false;
         
         // 啟動心跳循環
         this.startGameLoop();
 
-        // 🔥 [新增] 2. 伺服器剛啟動的第一局，讓機器人進場
-        // 這樣不用等下一局，馬上就有機器人開始下注
+        // 伺服器剛啟動的第一局，先發牌並讓機器人進場
+        // 這樣第一局才有牌可以看
+        this.generateResult(); 
         botManager.prepareBotsForRound();
         botManager.startBettingRoutine();
     }
@@ -39,6 +39,17 @@ class GameTable {
     async tick() {
         this.countdown--;
 
+        // 🔥 [修改] 倒數剩 5 秒時：只做鎖定，不重新發牌
+        // 因為牌在 resetGame() 時已經發好了
+        if (this.phase === PHASES.BETTING && this.countdown === 5) { // 這裡建議對應 TIMING.LOCK_BEFORE_END
+            this.isBetLocked = true;
+            
+            // 通知前端：鎖住籌碼，顯示停止下注
+            this.io.emit('bet_lock', { lock: true }); 
+            
+            console.log("🔒 [System] 下注鎖定 (剩5秒)");
+        }
+
         // 每秒廣播時間
         this.io.emit('time_tick', { 
             phase: this.phase, 
@@ -46,6 +57,7 @@ class GameTable {
             tableBets: betManager.tableBets 
         });
 
+        // 倒數結束，進入下一階段
         if (this.countdown <= 0) {
             await this.nextPhase();
         }
@@ -55,7 +67,9 @@ class GameTable {
         switch (this.phase) {
             case PHASES.BETTING:
                 // 1. 下注結束 -> 開始發牌
-                this.generateResult();
+                // 🔥 [修正] 這裡絕對不能再 call generateResult()
+                // 因為結果早在 18 秒前就決定好了 (甚至被後台換過了)
+                
                 this.phase = PHASES.DEALING;
                 this.countdown = TIMING.DEALING_DURATION;
                 break;
@@ -99,6 +113,7 @@ class GameTable {
                 huang:  deck.slice(20, 25),
             };
             
+            // 計算點數
             const results = {
                 banker: gameLogic.calculateHand(hands.banker),
                 tian:   gameLogic.calculateHand(hands.tian),
@@ -107,6 +122,7 @@ class GameTable {
                 huang:  gameLogic.calculateHand(hands.huang),
             };
 
+            // 判斷輸贏
             const winners = {
                 tian: gameLogic.isPlayerWin(results.tian, results.banker),
                 di:   gameLogic.isPlayerWin(results.di, results.banker),
@@ -115,9 +131,36 @@ class GameTable {
             };
 
             this.roundResult = { hands, results, winners };
+            // console.log("🎴 新牌局已生成 (後台可見)");
         } catch (error) {
             console.error("發牌邏輯錯誤:", error);
         }
+    }
+
+    // 🔥 [新增] 上帝換牌功能 (給後台 API 呼叫)
+    swapHands(targetA, targetB) {
+        if (!this.roundResult) return false;
+
+        const hands = this.roundResult.hands;
+        
+        // 1. 交換手牌陣列
+        const tempHand = hands[targetA];
+        hands[targetA] = hands[targetB];
+        hands[targetB] = tempHand;
+
+        // 2. 重新計算點數結果
+        const results = this.roundResult.results;
+        results[targetA] = gameLogic.calculateHand(hands[targetA]);
+        results[targetB] = gameLogic.calculateHand(hands[targetB]);
+
+        // 3. 重新判斷輸贏
+        const winners = this.roundResult.winners;
+        ['tian', 'di', 'xuan', 'huang'].forEach(zone => {
+            winners[zone] = gameLogic.isPlayerWin(results[zone], results.banker);
+        });
+
+        console.log(`👨‍💻 [Admin] 上帝換牌執行：[${targetA}] <==> [${targetB}]`);
+        return true;
     }
 
     // 💰 結算派彩
@@ -159,12 +202,18 @@ class GameTable {
     resetGame() {
         this.phase = PHASES.BETTING;
         this.countdown = TIMING.BETTING_DURATION;
-        this.roundResult = null;
-        betManager.reset(); 
         
+        // 重置鎖定狀態
+        this.isBetLocked = false; 
+        this.io.emit('bet_lock', { lock: false });
+
+        // 🔥 [關鍵修改] 新局一開始就先發好牌 (存給後台看，玩家還看不到)
+        this.generateResult(); 
+        console.log("🆕 新局開始，牌局結果已預先生成");
+
+        betManager.reset(); 
         this.io.emit('update_table_bets', { tian: 0, di: 0, xuan: 0, huang: 0 });
 
-        // 🔥 [新增] 3. 新局開始，叫機器人出來上班
         botManager.prepareBotsForRound();
         botManager.startBettingRoutine();
     }

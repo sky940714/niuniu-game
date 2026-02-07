@@ -13,7 +13,14 @@ const UserService = require('./services/userService');
 const botManager = require('./managers/BotManager');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: [
+        "http://localhost:5173", // 玩家前端
+        "http://localhost:5174"  // 老闆後台
+    ],
+    methods: ["GET", "POST"],
+    credentials: true
+}));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -171,6 +178,57 @@ io.on('connection', (socket) => {
         // 玩家斷線處理
     });
 });
+
+// ==========================================
+// 🔥 [新增] 後台管理 API (Admin API)
+// ==========================================
+
+// 1. 👁️ 預覽牌局 (Preview) - 讓老闆看到還沒開的牌
+app.get('/api/admin/preview', (req, res) => {
+    // 只有當 gameTable 已經產生結果 (倒數 5 秒內) 才能看
+    if (!gameTable.roundResult) {
+        return res.json({ ready: false, message: "牌局尚未生成 (請等待倒數 5 秒)" });
+    }
+
+    // 回傳目前的牌型結構
+    // 包含：hands (各家手牌), results (牛牛點數)
+    res.json({
+        ready: true,
+        hands: gameTable.roundResult.hands,
+        results: gameTable.roundResult.results
+    });
+});
+
+// 2. 🔄 交換手牌 (Swap) - 上帝之手
+app.post('/api/admin/swap-hand', (req, res) => {
+    const { pos1, pos2 } = req.body;
+    // 預期傳入: { pos1: 'banker', pos2: 'tian' }
+    // pos 選項: 'banker', 'tian', 'di', 'xuan', 'huang'
+
+    if (!pos1 || !pos2) return res.status(400).json({ error: "缺少參數" });
+
+    // 呼叫 GameTable 的換牌方法 (稍後會在 GameTable.js 實作)
+    const success = gameTable.swapHands(pos1, pos2);
+    
+    if (success) {
+        console.log(`👨‍💻 後台換牌成功: ${pos1} <-> ${pos2}`);
+        res.json({ success: true, message: `已交換 ${pos1} 與 ${pos2} 的手牌` });
+    } else {
+        res.status(500).json({ error: "交換失敗 (可能是牌局尚未生成)" });
+    }
+});
+
+// 3. 取得即時桌況 (監控下注)
+app.get('/api/admin/status', (req, res) => {
+    // 簡單回傳目前狀態，讓後台知道何時倒數結束
+    res.json({
+        phase: gameTable.phase,
+        countdown: gameTable.countdown,
+        // 如果想看下注池水位，也可以加在這裡
+    });
+});
+
+// ==========================================
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
