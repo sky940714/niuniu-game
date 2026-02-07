@@ -1,8 +1,11 @@
 // backend/managers/GameTable.js
 const { TIMING } = require('../config/gameRules');
-const gameLogic = require('../logic'); // 引用你原本的 logic.js
+const gameLogic = require('../logic'); 
 const betManager = require('./BetManager');
 const UserService = require('../services/userService');
+
+// 🔥 [新增] 1. 引入 BotManager
+const botManager = require('./BotManager');
 
 const PHASES = {
     BETTING: 'BETTING',
@@ -16,10 +19,15 @@ class GameTable {
         this.io = io;
         this.phase = PHASES.BETTING;
         this.countdown = TIMING.BETTING_DURATION;
-        this.roundResult = null; // 儲存開牌結果
+        this.roundResult = null; 
         
         // 啟動心跳循環
         this.startGameLoop();
+
+        // 🔥 [新增] 2. 伺服器剛啟動的第一局，讓機器人進場
+        // 這樣不用等下一局，馬上就有機器人開始下注
+        botManager.prepareBotsForRound();
+        botManager.startBettingRoutine();
     }
 
     startGameLoop() {
@@ -31,12 +39,11 @@ class GameTable {
     async tick() {
         this.countdown--;
 
-        // 每秒廣播時間 (讓前端同步)
-        // 優化：只在倒數關鍵時刻或整數秒廣播，節省流量，但這裡先每秒廣播確保同步
+        // 每秒廣播時間
         this.io.emit('time_tick', { 
             phase: this.phase, 
             countdown: this.countdown,
-            tableBets: betManager.tableBets // 順便廣播桌面籌碼，防止前端沒收到下注事件
+            tableBets: betManager.tableBets 
         });
 
         if (this.countdown <= 0) {
@@ -76,11 +83,11 @@ class GameTable {
         this.io.emit('phase_change', {
             phase: this.phase,
             countdown: this.countdown,
-            roundResult: this.roundResult // 如果是 DEALING 階段，前端會收到牌資料
+            roundResult: this.roundResult 
         });
     }
 
-    // 🎴 產生牌局結果 (呼叫 logic.js)
+    // 🎴 產生牌局結果
     generateResult() {
         try {
             const deck = gameLogic.createDeck();
@@ -92,7 +99,6 @@ class GameTable {
                 huang:  deck.slice(20, 25),
             };
             
-            // 計算點數 (這裡假設 logic.js 有這些 function)
             const results = {
                 banker: gameLogic.calculateHand(hands.banker),
                 tian:   gameLogic.calculateHand(hands.tian),
@@ -101,7 +107,6 @@ class GameTable {
                 huang:  gameLogic.calculateHand(hands.huang),
             };
 
-            // 比牌 (閒家 vs 莊家)
             const winners = {
                 tian: gameLogic.isPlayerWin(results.tian, results.banker),
                 di:   gameLogic.isPlayerWin(results.di, results.banker),
@@ -117,7 +122,6 @@ class GameTable {
 
     // 💰 結算派彩
     async settleBets() {
-        // 遍歷所有在線 Socket
         const sockets = await this.io.fetchSockets();
         
         for (const socket of sockets) {
@@ -127,14 +131,11 @@ class GameTable {
             let totalWin = 0;
             let hasBet = false;
 
-            // 檢查每一門 (tian, di, xuan, huang)
             for (const [zone, amount] of Object.entries(bets)) {
                 if (amount > 0) {
                     hasBet = true;
-                    // 如果該門贏了
                     if (this.roundResult.winners[zone]) {
                         const multiplier = this.roundResult.results[zone].multiplier;
-                        // 本金 + (本金 * 倍率 * 0.95)
                         const profit = Math.floor(amount * multiplier * 0.95);
                         totalWin += (amount + profit);
                     }
@@ -142,13 +143,10 @@ class GameTable {
             }
 
             if (hasBet && totalWin > 0) {
-                // 更新資料庫餘額
                 await UserService.updateBalance(socket.user.db_id, totalWin);
                 
-                // 更新記憶體中的餘額 (讓下一局驗證正確)
                 socket.user.balance += totalWin;
 
-                // 通知前端中獎
                 socket.emit('update_balance', { 
                     balance: socket.user.balance,
                     winAmount: totalWin
@@ -162,10 +160,13 @@ class GameTable {
         this.phase = PHASES.BETTING;
         this.countdown = TIMING.BETTING_DURATION;
         this.roundResult = null;
-        betManager.reset(); // 清空下注管理器
+        betManager.reset(); 
         
-        // 廣播清空桌面的事件
         this.io.emit('update_table_bets', { tian: 0, di: 0, xuan: 0, huang: 0 });
+
+        // 🔥 [新增] 3. 新局開始，叫機器人出來上班
+        botManager.prepareBotsForRound();
+        botManager.startBettingRoutine();
     }
 }
 

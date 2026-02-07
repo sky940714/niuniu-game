@@ -1,6 +1,12 @@
 // backend/managers/BetManager.js
 const { BET_LIMITS, TIMING } = require('../config/gameRules');
 
+// 🔥 設定本局遊戲的最高賠付倍數
+// 如果你的牛牛規則包含五花牛(x5)，這裡必須設為 5
+// 如果最高只有牛牛(x3)，這裡設為 3
+// 這是 B 模式風控的核心參數
+const MAX_PAYOUT_ODDS = 5; 
+
 class BetManager {
     constructor() {
         // 記錄整張桌子的總注碼 (天、地、玄、黃)
@@ -30,16 +36,31 @@ class BetManager {
             return { valid: false, msg: "金額錯誤" };
         }
 
-        // 4. 檢查餘額
-        if (player.balance < amount) {
-            return { valid: false, msg: "餘額不足" };
-        }
-
-        // 初始化玩家下注紀錄 (如果第一次下)
+        // --- 初始化玩家下注紀錄 (如果第一次下) ---
+        // 必須先初始化，才能計算該玩家目前的總下注額
         if (!this.playerBets[player.socketId]) {
             this.playerBets[player.socketId] = { tian: 0, di: 0, xuan: 0, huang: 0 };
         }
         const currentPlayerBets = this.playerBets[player.socketId];
+
+        // --- 計算玩家目前已下注總額 ---
+        const currentTotal = Object.values(currentPlayerBets).reduce((a, b) => a + b, 0);
+
+        // 4. 🔥 [核心修改] B 模式餘額風控檢查 🔥
+        // 公式：(目前已下注 + 本次下注) * 最高賠率 <= 玩家餘額
+        // 避免玩家輸了最高倍率時，餘額變成負數
+        const potentialLiability = (currentTotal + amount) * MAX_PAYOUT_ODDS;
+
+        if (potentialLiability > player.balance) {
+            // 計算玩家還剩多少「安全額度」可以下注 (僅供顯示或除錯)
+            const maxSafeBetTotal = Math.floor(player.balance / MAX_PAYOUT_ODDS);
+            const remainingQuota = maxSafeBetTotal - currentTotal;
+            
+            return { 
+                valid: false, 
+                msg: `餘額不足以支付最高賠付 (需保留 ${MAX_PAYOUT_ODDS} 倍本金)` 
+            };
+        }
 
         // 5. 檢查單注下限
         if (amount < BET_LIMITS.MIN_BET) {
@@ -52,7 +73,6 @@ class BetManager {
         }
 
         // 7. 檢查單局總上限 (該玩家所有門的累積)
-        const currentTotal = Object.values(currentPlayerBets).reduce((a, b) => a + b, 0);
         if (currentTotal + amount > BET_LIMITS.MAX_TOTAL_BET) {
             return { valid: false, msg: `單局總上限 $${BET_LIMITS.MAX_TOTAL_BET}` };
         }
@@ -62,7 +82,7 @@ class BetManager {
 
     // ✅ 執行下注
     placeBet(socketId, zoneName, amount) {
-        // 更新個人紀錄
+        // 更新個人紀錄 (這裡理論上 validateBet 已經初始化過了，但為了保險起見保留檢查)
         if (!this.playerBets[socketId]) {
             this.playerBets[socketId] = { tian: 0, di: 0, xuan: 0, huang: 0 };
         }

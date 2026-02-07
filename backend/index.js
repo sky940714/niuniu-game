@@ -6,10 +6,11 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-// 引入新模組
+// 引入模組
 const GameTable = require('./managers/GameTable');
 const betManager = require('./managers/BetManager');
 const UserService = require('./services/userService');
+const botManager = require('./managers/BotManager');
 
 const app = express();
 app.use(cors());
@@ -23,6 +24,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'Prestige_NiuNiu_Super_Secret_2026'
 
 // 🚀 初始化遊戲桌
 const gameTable = new GameTable(io);
+botManager.init(io, gameTable);
 
 // === 🛡️ Socket 驗證中間件 ===
 io.use(async (socket, next) => {
@@ -57,6 +59,7 @@ io.on('connection', (socket) => {
     // 1. 自動登入與狀態同步
     if (socket.user) {
         socket.emit('auth_success', socket.user);
+        
         // 傳送當前遊戲狀態
         socket.emit('init_state', {
             phase: gameTable.phase,
@@ -82,14 +85,12 @@ io.on('connection', (socket) => {
             const user = await UserService.findByUsername(data.username);
             if (!user) return socket.emit('login_response', { success: false, message: "帳號不存在" });
 
-            const bcrypt = require('bcrypt'); // 這裡臨時引用一下，或是移到 UserService 驗證密碼
+            const bcrypt = require('bcrypt'); 
             const isMatch = await bcrypt.compare(data.password, user.password);
             
             if (isMatch) {
                 const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '24h' });
                 
-                // 踢除舊連線邏輯可在此實作...
-
                 socket.user = { 
                     db_id: user.id, 
                     username: user.username, 
@@ -117,24 +118,30 @@ io.on('connection', (socket) => {
                 socket.emit('login_response', { success: false, message: "密碼錯誤" });
             }
         } catch (error) {
+            console.error(error);
             socket.emit('login_response', { success: false, message: "系統錯誤" });
         }
     });
 
-    // 4. 下注請求
+    // 4. 下注請求 (這裡會用到新的 B 模式檢查)
     socket.on('place_bet', async (data) => {
         if (!socket.user) return socket.emit('error_msg', '請先登入');
 
         const { zoneId, amount } = data; // amount 需為正整數
+
+        // 🔥 呼叫 BetManager 進行 B 模式餘額檢查
+        // socket.user 已經包含最新餘額
         const { valid, msg, zoneName } = betManager.validateBet(socket.user, zoneId, amount, gameTable);
 
         if (!valid) {
+            // 驗證失敗 (例如：餘額不足支付5倍賠付)，直接回傳錯誤
             return socket.emit('error_msg', msg);
         }
 
         // 驗證通過，執行扣款
         try {
-            // 扣除資料庫餘額
+            // 扣除資料庫餘額 (只扣本金)
+            // 注意：B 模式只是「檢查」你要有5倍錢，但實際下注只扣「1倍」
             const success = await UserService.updateBalance(socket.user.db_id, -amount);
             if (!success) throw new Error("扣款失敗");
 
@@ -155,13 +162,13 @@ io.on('connection', (socket) => {
             });
 
         } catch (error) {
-            console.error(error);
+            console.error("下注異常:", error);
             socket.emit('error_msg', '下注失敗，請稍後再試');
         }
     });
 
     socket.on('disconnect', () => {
-        // 玩家斷線，但在本局結束前，betManager 裡的注單還是有效的，結算時依然會派彩到 DB
+        // 玩家斷線處理
     });
 });
 

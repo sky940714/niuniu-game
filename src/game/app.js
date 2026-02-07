@@ -1,4 +1,4 @@
-import { Application, Assets, Sprite, Text, TextStyle, Container, Texture, Rectangle,} from 'pixi.js'; 
+import { Application, Assets, Sprite, Text, TextStyle, Container, Texture, Rectangle } from 'pixi.js'; 
 import { SqueezeController } from './SqueezeController';
 import { CoinRain } from './Effects';
 import gsap from 'gsap';
@@ -162,7 +162,9 @@ class GameApp {
             this.targetHands.huang.map(t => ({ texture: t }))
         ];
 
+        // 這裡的 formatNiuLabel 已經不再是唯一的判斷標準，後端會送 label 過來
         const formatNiuLabel = (res) => {
+            if (res.label) return res.label; // 優先使用後端 label
             if(!res || res.type === 'NO_NIU') return '無牛';
             if(res.niu === 10) return '牛牛';
             return `牛${res.niu}`;
@@ -237,7 +239,7 @@ class GameApp {
                             card.eventMode = 'static';
                             card.cursor = 'pointer';
                             
-                            // 🔥 [修改] 1. 加大 1.5 倍判定範圍
+                            // 1. 加大 1.5 倍判定範圍
                             const baseW = card.texture.width;
                             const baseH = card.texture.height;
                             const hitW = baseW * 1.5;
@@ -286,7 +288,6 @@ class GameApp {
             cardSprite.visible = true; 
             
             // 移除除錯用的紅框 (如果有加的話)，避免開牌後還看得到
-            // 這裡會移除 cardSprite 所有子元件(包含 debugRect)
             cardSprite.removeChildren();
 
             if (this.parentElement) this.parentElement.style.zIndex = '5'; 
@@ -318,6 +319,7 @@ class GameApp {
         setTimeout(() => this.settleAll(), 600);
     }
 
+    // 🔥 重點修改區塊：正確讀取後端 label 並套用你設定的座標 🔥
     async settleAll() {
         if (!this.serverResult) return;
         const winners = this.serverResult.winners; 
@@ -329,16 +331,19 @@ class GameApp {
 
         // --- 1. 處理莊家 (Banker) 文字位置 ---
         const bRes = this.serverResult.results.banker;
-        const bLabel = bRes.niu === 10 ? "牛牛" : (bRes.niu > 0 ? `牛${bRes.niu}` : "無牛");
+        
+        // 🔥 [修正]：優先使用後端回傳的 label (例如 "五小妞", "炸彈", "牛牛")
+        // 如果後端沒回傳 label (為了防呆)，才用舊邏輯
+        const bLabel = bRes.label || (bRes.niu === 10 ? "牛牛" : (bRes.niu > 0 ? `牛${bRes.niu}` : "無牛"));
+        
         const bankerText = new Text({ text: bLabel, style: styleWin });
         
-        // 取得莊家第 3 張牌的位置作為基準點
         const bPos = this.getFanCardProps(-1, 2);
         bankerText.anchor.set(0.5);
 
-        // 🔥 [修改這裡] 莊家文字位置
-        bankerText.x = bPos.x + 140;   // ↔️ 左右：若要往右改 +20，往左改 -20
-        bankerText.y = bPos.y + 0;  // ↕️ 上下：若要更靠近牌改 +0，更下面改 +80
+        // 使用你設定的座標
+        bankerText.x = bPos.x + 140; 
+        bankerText.y = bPos.y + 0; 
         
         this.uiLayer.addChild(bankerText);
 
@@ -349,16 +354,18 @@ class GameApp {
             if (isWin) winningZones.push(i);
             
             const pRes = this.serverResult.results[key];
-            const pLabel = pRes.niu === 10 ? "牛牛" : (pRes.niu > 0 ? `牛${pRes.niu}` : "無牛");
+            
+            // 🔥 [修正]：同樣優先使用後端 label
+            const pLabel = pRes.label || (pRes.niu === 10 ? "牛牛" : (pRes.niu > 0 ? `牛${pRes.niu}` : "無牛"));
+            
             const typeText = new Text({ text: pLabel, style: isWin ? styleWin : styleLose });
             
-            // 取得該閒家第 3 張牌的位置作為基準點
             const pPos = this.getFanCardProps(i, 2);
             typeText.anchor.set(0.5);
 
-            // 🔥 [修改這裡] 閒家文字位置
-            typeText.x = pPos.x + 0;    // ↔️ 左右：建議改 +5 或 -5 微調置中
-            typeText.y = pPos.y + 100;  // ↕️ 上下：目前是 +100 (牌下方)，若要蓋在牌中間改 +40
+            // 使用你設定的座標
+            typeText.x = pPos.x + 0; 
+            typeText.y = pPos.y + 100; 
 
             this.uiLayer.addChild(typeText);
         }
