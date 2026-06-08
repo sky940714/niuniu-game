@@ -63,8 +63,8 @@ function calculateHand(cards) {
 
     // --- 特殊牌型判斷 (分數權重設定：萬位數代表牌型) ---
 
-    // 1. 五小妞 (8倍): 全 <= 5 且 總和 <= 10
-    const isAllSmall = cards.every(c => c.rank < 5); 
+    // 1. 五小妞 (8倍): 全 A~5 且 總和 <= 10
+    const isAllSmall = cards.every(c => c.rank <= 5);
     const sumFace = cards.reduce((sum, c) => sum + c.rank, 0);
     if (isAllSmall && sumFace <= 10) {
         return { type: 'FIVE_SMALL', label: '五小妞', multiplier: 8, rankScore: 90000, highCard };
@@ -188,4 +188,173 @@ function isPlayerWin(playerResult, bankerResult) {
     return false;
 }
 
-module.exports = { createDeck, calculateHand, isPlayerWin };
+// ── Admin: Generate a hand of a specific type ─────────────────────────────
+
+function _shuffleArr(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+function _buildPool(excludedCards) {
+    const excluded = new Set(excludedCards.map(c => `${c.suit}_${c.rank}`));
+    const suits = ['s','h','d','c'];
+    const ranks = [1,2,3,4,5,6,7,8,9,10,11,12,13];
+    const deck = [];
+    for (const suit of suits)
+        for (const rank of ranks)
+            if (!excluded.has(`${suit}_${rank}`))
+                deck.push({ suit, rank });
+    return _shuffleArr(deck);
+}
+
+function _genNiuHand(available, targetNiu) {
+    const target = targetNiu === 10 ? 0 : targetNiu;
+    const sample = available.slice(0, Math.min(available.length, 24));
+    const n = sample.length;
+
+    for (let i = 0; i < n - 2; i++) {
+        for (let j = i+1; j < n - 1; j++) {
+            for (let k = j+1; k < n; k++) {
+                const ts = (getCardValue(sample[i].rank) + getCardValue(sample[j].rank) + getCardValue(sample[k].rank)) % 10;
+                if (ts !== 0) continue;
+
+                const used = new Set([i,j,k]);
+                // bucket remaining cards by (value % 10)
+                const buckets = {};
+                for (let m = 0; m < n; m++) {
+                    if (used.has(m)) continue;
+                    const v = getCardValue(sample[m].rank) % 10;
+                    if (!buckets[v]) buckets[v] = [];
+                    buckets[v].push(m);
+                }
+
+                for (let p = 0; p < n; p++) {
+                    if (used.has(p)) continue;
+                    const vp = getCardValue(sample[p].rank) % 10;
+                    const need = (target - vp + 10) % 10;
+                    const cands = buckets[need] || [];
+                    for (const q of cands) {
+                        if (q <= p) continue;
+                        const hand = [sample[i], sample[j], sample[k], sample[p], sample[q]];
+                        const res = calculateHand(hand);
+                        if (targetNiu === 10 && res.type === 'NIU_NIU') return hand;
+                        if (targetNiu < 10 && res.niu === targetNiu) return hand;
+                    }
+                }
+            }
+        }
+    }
+    return null;
+}
+
+function _genNoNiuHand(available) {
+    const nonFace = available.filter(c => c.rank <= 9);
+    const pool = nonFace.length >= 8 ? _shuffleArr([...nonFace]) : _shuffleArr([...available]);
+    for (let t = 0; t < 300; t++) {
+        _shuffleArr(pool);
+        const hand = pool.slice(0, 5);
+        if (hand.length < 5) break;
+        if (calculateHand(hand).type === 'NO_NIU') return hand;
+    }
+    return null;
+}
+
+function generateHandOfType(handType, excludedCards = []) {
+    const av = _buildPool(excludedCards);
+    if (av.length < 5) return null;
+
+    const byRank = {};
+    for (const c of av) { if (!byRank[c.rank]) byRank[c.rank] = []; byRank[c.rank].push(c); }
+
+    switch (handType) {
+
+        case 'FIVE_SMALL': {
+            const small = av.filter(c => c.rank <= 5).sort((a,b) => a.rank - b.rank);
+            if (small.length < 5) return null;
+            const h = small.slice(0, 5);
+            return h.reduce((s,c) => s + c.rank, 0) <= 10 ? h : null;
+        }
+
+        case 'BOMB': {
+            const qr = Object.keys(byRank).filter(r => byRank[r].length >= 4);
+            if (!qr.length) return null;
+            for (const r of qr) {
+                const four = byRank[r].slice(0,4);
+                // Fifth card must not be tiny enough to form FIVE_SMALL
+                const fifth = av.find(c => c.rank != r && !(four.every(x=>x.rank<=5) && c.rank<=5 && four.reduce((s,x)=>s+x.rank,0)+c.rank<=10));
+                if (!fifth) continue;
+                const hand = [...four, fifth];
+                if (calculateHand(hand).type === 'BOMB') return hand;
+            }
+            return null;
+        }
+
+        case 'FULL_HOUSE': {
+            const tr = Object.keys(byRank).filter(r => byRank[r].length >= 3);
+            for (const triR of tr) {
+                const pr = Object.keys(byRank).filter(r => r != triR && byRank[r].length >= 2);
+                for (const pR of pr) {
+                    const hand = [...byRank[triR].slice(0,3), ...byRank[pR].slice(0,2)];
+                    if (calculateHand(hand).type === 'FULL_HOUSE') return hand;
+                }
+            }
+            return null;
+        }
+
+        case 'STRAIGHT_FLUSH': {
+            const bySuit = {};
+            for (const c of av) { if (!bySuit[c.suit]) bySuit[c.suit] = {}; bySuit[c.suit][c.rank] = c; }
+            const seqs = [[1,2,3,4,5],[2,3,4,5,6],[3,4,5,6,7],[4,5,6,7,8],
+                          [5,6,7,8,9],[6,7,8,9,10],[7,8,9,10,11],[8,9,10,11,12],[9,10,11,12,13]];
+            for (const suit of ['s','h','d','c']) {
+                if (!bySuit[suit]) continue;
+                for (const seq of seqs)
+                    if (seq.every(r => bySuit[suit][r])) return seq.map(r => bySuit[suit][r]);
+            }
+            return null;
+        }
+
+        case 'FIVE_KNIGHTS': {
+            // Pick mixed J/Q/K to avoid accidentally forming BOMB (4-of-a-kind)
+            const j = av.filter(c => c.rank === 11);
+            const q = av.filter(c => c.rank === 12);
+            const k = av.filter(c => c.rank === 13);
+            const combos = [
+                [...j.slice(0,2), ...q.slice(0,2), ...k.slice(0,1)],
+                [...j.slice(0,2), ...q.slice(0,1), ...k.slice(0,2)],
+                [...j.slice(0,1), ...q.slice(0,2), ...k.slice(0,2)],
+                [...j.slice(0,1), ...q.slice(0,1), ...k.slice(0,3)],
+                [...j.slice(0,3), ...q.slice(0,1), ...k.slice(0,1)],
+                [...j.slice(0,1), ...q.slice(0,3), ...k.slice(0,1)],
+            ];
+            for (const hand of combos)
+                if (hand.length === 5 && calculateHand(hand).type === 'FIVE_KNIGHTS') return hand;
+            return null;
+        }
+
+        case 'SILVER_NIU': {
+            const tens = av.filter(c => c.rank === 10);
+            const face = av.filter(c => c.rank >= 11);
+            return (tens.length && face.length >= 4) ? [tens[0], ...face.slice(0,4)] : null;
+        }
+
+        case 'NIU_NIU': return _genNiuHand(av, 10);
+        case 'NO_NIU':  return _genNoNiuHand(av);
+
+        default: {
+            const m = handType.match(/^NIU_(\d)$/);
+            return m ? _genNiuHand(av, parseInt(m[1])) : null;
+        }
+    }
+}
+
+// 從可用牌池隨機取 5 張（供閒門發牌用）
+function generateRandomHand(excludedCards = []) {
+    const pool = _buildPool(excludedCards);
+    return pool.length >= 5 ? pool.slice(0, 5) : null;
+}
+
+module.exports = { createDeck, calculateHand, isPlayerWin, generateHandOfType, generateRandomHand };

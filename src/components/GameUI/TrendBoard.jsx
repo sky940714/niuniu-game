@@ -52,15 +52,18 @@ const TrendBoard = ({ history, onClose }) => {
 const styles = {
   overlay: {
     position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-    background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(3px)',
-    zIndex: 999, display: 'flex', justifyContent: 'center', alignItems: 'center',
+    background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
+    zIndex: 9998,
+    display: 'flex', justifyContent: 'center', alignItems: 'center',
+    pointerEvents: 'auto',
   },
   board: {
     width: '90%', maxWidth: '400px',
-    background: '#1a1a1a',
-    border: '2px solid #d4af37', borderRadius: '15px',
-    padding: '15px',
-    boxShadow: '0 0 30px rgba(212,175,55,0.3)',
+    background: 'rgba(15,17,30,0.97)',
+    border: '1px solid rgba(212,175,55,0.4)', borderRadius: '20px',
+    padding: '20px',
+    boxShadow: '0 8px 40px rgba(0,0,0,0.9)',
+    pointerEvents: 'auto',
   },
   header: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px',

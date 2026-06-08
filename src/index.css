@@ -1,11 +1,12 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang TC",
+               "Helvetica Neue", Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
+  color-scheme: dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  background-color: #04060f;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -24,10 +25,11 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
+  padding: 0;
   min-width: 320px;
   min-height: 100vh;
+  background-color: #04060f;
+  overflow: hidden;
 }
 
 h1 {
@@ -53,6 +55,18 @@ button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
+
+/* ── 中途進入提示：脈動點動畫 ── */
+@keyframes midRoundPulse {
+  0%, 60%, 100% { opacity: 0.2; transform: scale(0.75); }
+  30% { opacity: 1; transform: scale(1.15); }
+}
+.mid-round-dot {
+  display: inline-block;
+  animation: midRoundPulse 1.4s ease-in-out infinite;
+}
+.mid-round-dot:nth-child(2) { animation-delay: 0.28s; }
+.mid-round-dot:nth-child(3) { animation-delay: 0.56s; }
 
 @media (prefers-color-scheme: light) {
   :root {

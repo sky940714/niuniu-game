@@ -11,10 +11,17 @@ function App() {
   const reLogin = useGameStore((state) => state.reLogin);
   const logout = useGameStore((state) => state.logout);
 
-  // --- 🆕 初始化連線邏輯 ---
+  // 初始連線 + 擱置分頁後重連
   useEffect(() => {
-    // 當頁面重新載入時，嘗試使用本地 Token 連線
     connectSocket();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !socket.connected) {
+        connectSocket();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   useEffect(() => {

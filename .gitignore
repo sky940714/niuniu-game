@@ -1,3 +1,11 @@
+# Environment variables (contains secrets — never commit)
+.env
+*.env
+!.env.example
+
+# Database backups
+*.sql
+
 # Logs
 logs
 *.log

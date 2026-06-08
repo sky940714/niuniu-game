@@ -24,11 +24,16 @@ class GameApp {
         this.bankerSprites = []; 
         this.playerSprites = [[], [], [], []]; 
         
-        this.cardScale = 1.6; 
-        this.squeezedMap = {}; 
+        this.cardScale = 1.6;
+        this.squeezedMap = {};
         this.targetHands = null;
         this.serverResult = null;
         this.assetsLoaded = false;
+        // 結算動畫計時器 ID，resetTable 時用來取消懸空的 setTimeout
+        this._settleTimer1 = null;
+        this._settleTimer2 = null;
+        // 世代計數器：resetTable() 時遞增，舊的非同步結算鏈比對不符即放棄
+        this._settleGeneration = 0;
     }
 
     async init(containerElement) {
@@ -70,6 +75,9 @@ class GameApp {
         this.squeezeCtrl = new SqueezeController(this.app);
         this.coinRain = new CoinRain(this.app);
 
+        // 擱置分頁後回來時，避免 GSAP 補間動畫大幅跳躍
+        gsap.ticker.lagSmoothing(500, 33);
+
         await this.loadAssets();
         this.generateFakeHistory();
         console.log("🎮 Pixi 遊戲引擎初始化完成");
@@ -105,6 +113,16 @@ class GameApp {
     }
 
     resetTable() {
+        // 取消仍在飛的結算 setTimeout（防止 RESULT→BETTING 切換後 settleAll 還跑出來）
+        clearTimeout(this._settleTimer1); this._settleTimer1 = null;
+        clearTimeout(this._settleTimer2); this._settleTimer2 = null;
+        // 世代遞增 → 讓所有仍在 await 中的舊結算鏈一律放棄執行
+        this._settleGeneration++;
+
+        // 先停金幣動畫並清除所有金幣 Graphics，重置 isActive 旗標，
+        // 否則下局 play() 會被自己的 guard 擋住且金幣粒子殘留在 stage
+        if (this.coinRain) this.coinRain.stop();
+
         if (this.cardContainer) this.cardContainer.removeChildren();
         if (this.uiLayer) this.uiLayer.removeChildren();
 
@@ -113,14 +131,16 @@ class GameApp {
 
         this.bankerSprites = [];
         this.playerSprites = [[], [], [], []];
-        this.resultTexts = []; 
+        this.resultTexts = [];
         this.squeezedMap = {};
         this.isPlaying = false;
-        
-        // 重置時確保畫布回歸穿透狀態
+
+        // 重置：canvas 穿透，容器降回 zIndex 5（低於籌碼層 50）
         if (this.app) {
             this.app.canvas.style.pointerEvents = 'none';
-            this.app.canvas.style.zIndex = '5';
+        }
+        if (this.parentElement) {
+            this.parentElement.style.zIndex = '5';
         }
     }
 
@@ -150,8 +170,13 @@ class GameApp {
     async startGame() {
         this.isPlaying = true;
         this.resetTable();
-        
-        // 重要：發牌開始時，允許畫布接收點擊，否則點不到卡片
+
+        // 將整個 GameCanvas 容器（position:fixed, zIndex:5）提升到 55，
+        // 高於籌碼層（position:fixed, zIndex:50），確保牌面不被籌碼遮擋。
+        // 注意：修改 canvas 本身的 zIndex 無效，因為它在容器的 stacking context 內。
+        if (this.parentElement) {
+            this.parentElement.style.zIndex = '55';
+        }
         this.app.canvas.style.pointerEvents = 'auto';
 
         const bankerHand = this.targetHands.banker.map(t => ({ texture: t }));
@@ -178,7 +203,7 @@ class GameApp {
             { ...this.serverResult.results.huang, label: formatNiuLabel(this.serverResult.results.huang) }
         ];
 
-        await this.dealRound(bankerHand, playersHands, bResult, pResults);
+        await this.dealRound(bankerHand, playersHands);
     }
 
     getFanCardProps(zoneIndex, cardIndex, totalCards = 5) {
@@ -205,7 +230,7 @@ class GameApp {
         return { x: centerX + xOffset, y: centerY, rotation: angle };
     }
 
-    async dealRound(bankerHand, playersHands, bResult, pResults) {
+    async dealRound(bankerHand, playersHands) {
         const w = this.app.screen.width;
         const h = this.app.screen.height;
         const dealOrder = [-1, 0, 1, 2, 3];
@@ -285,38 +310,46 @@ class GameApp {
             if (cardData && cardData.texture) {
                 cardSprite.texture = Texture.from(cardData.texture);
             }
-            cardSprite.visible = true; 
-            
-            // 移除除錯用的紅框 (如果有加的話)，避免開牌後還看得到
+            cardSprite.visible = true;
             cardSprite.removeChildren();
 
-            if (this.parentElement) this.parentElement.style.zIndex = '5'; 
-            this.app.canvas.style.zIndex = '5'; 
-            this.app.canvas.style.pointerEvents = 'auto'; 
-            
+            // 咪牌結束後：容器降回 55（仍高於籌碼 50，牌面保持可見）
+            // 不能降回 5，否則後續的牌又被籌碼蓋住
+            if (this.parentElement) this.parentElement.style.zIndex = '55';
+            this.app.canvas.style.pointerEvents = 'auto';
+
             if (this.onSqueezeStateChange) this.onSqueezeStateChange(false);
             gsap.fromTo(cardSprite.scale, {x: 1.1, y: 1.1}, {x: this.cardScale, y: this.cardScale, duration: 0.2});
         });
     }
 
     async revealAllRemaining() {
-        if(!this.targetHands) return;
+        if (!this.targetHands) return;
+        // 若本次進入遊戲廳沒有發牌（中途加入），sprites 為空，直接跳過
+        if (!this.playerSprites[0] || this.playerSprites[0].length === 0) return;
+        const gen = this._settleGeneration; // 捕捉當前世代，稍後用來驗證是否已被 resetTable 取消
         const handKeys = ['tian', 'di', 'xuan', 'huang'];
         for(let z=0; z<4; z++) {
-            if (!this.squeezedMap[z]) { 
+            if (!this.squeezedMap[z]) {
                 this.flipCard(this.playerSprites[z][4], this.targetHands[handKeys[z]][4]);
             }
         }
-        setTimeout(() => this.openBankerAndSettle(), 800);
+        this._settleTimer1 = setTimeout(() => {
+            if (this._settleGeneration === gen) this.openBankerAndSettle(gen);
+        }, 800);
     }
 
-    async openBankerAndSettle() {
+    async openBankerAndSettle(gen) {
         const bankerCards = this.targetHands.banker;
         for(let i=0; i<5; i++) {
-            await new Promise(r => setTimeout(r, 150)); 
+            await new Promise(r => setTimeout(r, 150));
+            // 每次 await 回來都確認世代，若 resetTable() 已被呼叫就直接放棄
+            if (this._settleGeneration !== gen) return;
             this.flipCard(this.bankerSprites[i], bankerCards[i]);
         }
-        setTimeout(() => this.settleAll(), 600);
+        this._settleTimer2 = setTimeout(() => {
+            if (this._settleGeneration === gen) this.settleAll();
+        }, 600);
     }
 
     // 🔥 重點修改區塊：正確讀取後端 label 並套用你設定的座標 🔥
@@ -326,8 +359,9 @@ class GameApp {
         const winnerKeys = ['tian', 'di', 'xuan', 'huang'];
         const winningZones = [];
 
-        const styleWin = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#f1c40f', stroke: '#000', strokeThickness: 4 });
-        const styleLose = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#bdc3c7', stroke: '#000', strokeThickness: 4 });
+        // Pixi v8：stroke 改為物件格式，移除已廢棄的 strokeThickness
+        const styleWin  = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#f1c40f', stroke: { color: '#000000', width: 5 } });
+        const styleLose = new TextStyle({ fontFamily: 'Arial', fontSize: 36, fontWeight: 'bold', fill: '#bdc3c7', stroke: { color: '#000000', width: 5 } });
 
         // --- 1. 處理莊家 (Banker) 文字位置 ---
         const bRes = this.serverResult.results.banker;
@@ -373,17 +407,40 @@ class GameApp {
         if (winningZones.length > 0) this.coinRain.play();
         if (this.onWinZones) this.onWinZones(winningZones);
 
+        // 將本局真實結果記入走勢歷史
+        winnerKeys.forEach((key, i) => {
+            const pRes = this.serverResult.results[key];
+            this.history.push({
+                winner: this.serverResult.winners[key] ? 'player' : 'banker',
+                type: pRes.label || (pRes.niu > 0 ? `牛${pRes.niu}` : '無牛'),
+            });
+        });
+        if (this.history.length > 100) this.history = this.history.slice(-100);
+        if (this.onHistoryChange) this.onHistoryChange([...this.history]);
+
         this.isPlaying = false;
-        // 結算完成，恢復畫布穿透，讓用戶可以點擊下一局籌碼
         this.app.canvas.style.pointerEvents = 'none';
     }
 
     destroy() {
+        clearTimeout(this._settleTimer1); this._settleTimer1 = null;
+        clearTimeout(this._settleTimer2); this._settleTimer2 = null;
+        this._settleGeneration++; // 中止所有仍在 await 中的結算鏈
+        // 停金幣、清 Pixi app（會 destroy 所有 Graphics children）
+        if (this.coinRain) this.coinRain.stop();
         if (this.app) {
             this.app.destroy(true, { children: true, texture: false, baseTexture: false });
             this.app = null;
             this.assetsLoaded = false;
         }
+        // 清除所有局資料，防止重新進入遊戲廳時用到舊資料
+        this.targetHands = null;
+        this.serverResult = null;
+        this.coinRain = null;
+        this.bankerSprites = [];
+        this.playerSprites = [[], [], [], []];
+        this.squeezedMap = {};
+        this.isPlaying = false;
     }
 }
 

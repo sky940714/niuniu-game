@@ -79,7 +79,9 @@ export class CoinRain {
 
   stop() {
     this.isActive = false;
-    // 清除所有金幣
+    // 殺掉每個金幣的 GSAP tween（包含 repeat:-1 的 scale 動畫）
+    this.coins.forEach(coin => gsap.killTweensOf(coin));
+    this.coins.forEach(coin => gsap.killTweensOf(coin.scale));
     this.container.removeChildren();
     this.coins = [];
     this.container.visible = false;

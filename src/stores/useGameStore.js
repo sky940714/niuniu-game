@@ -57,14 +57,14 @@ const useGameStore = create((set, get) => ({
   },
 
   updateBalance: (amount) => set((state) => {
-    if (!state.user) return state; // 保持原樣，不回傳空物件
-    
-    return {
-      user: { 
-        ...state.user, 
-        balance: state.user.balance + amount 
-      }
-    };
+    if (!state.user) return state;
+    return { user: { ...state.user, balance: state.user.balance + amount } };
+  }),
+
+  // 直接設定餘額（用於從 socket 同步最新值）
+  setUserBalance: (balance) => set((state) => {
+    if (!state.user) return state;
+    return { user: { ...state.user, balance } };
   }),
 }));
 

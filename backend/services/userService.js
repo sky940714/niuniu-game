@@ -46,13 +46,13 @@ class UserService {
         }
     }
 
-    // 💰 更新餘額 (原子性操作，最安全的寫法)
+    // 💰 更新餘額 (原子性操作；扣款時 DB 層確保不會低於 0)
     static async updateBalance(userId, amount) {
-        // amount 為正數代表加錢，負數代表扣錢
         const [result] = await pool.execute(
-            'UPDATE users SET balance = balance + ? WHERE id = ?',
-            [amount, userId]
+            'UPDATE users SET balance = balance + ? WHERE id = ? AND balance + ? >= 0',
+            [amount, userId, amount]
         );
+        // affectedRows=0 代表餘額不足（或使用者不存在）
         return result.affectedRows > 0;
     }
     
