@@ -1,7 +1,6 @@
 import { io } from "socket.io-client";
 
-// 設定後端網址 (建議之後可以改為 import.meta.env.VITE_API_URL)
-const URL = "http://localhost:3001";
+const URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 /**
  * 建立單一 Socket 實例

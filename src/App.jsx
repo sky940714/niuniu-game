@@ -85,7 +85,7 @@ function App() {
         <p>為了最佳體驗，請使用橫向遊玩</p>
       </div>
 
-      <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative' }}>
+      <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
         
         {/* 1. 登入頁 */}
         {currentPage === 'login' && <Login />}
@@ -93,21 +93,18 @@ function App() {
         {/* 2. 大廳頁 */}
         {currentPage === 'lobby' && <Lobby />}
 
-        {/* 3. 遊戲房 (React + Pixi 混合) */}
+        {/* 3. 遊戲房 (React + Pixi 混合)
+              position:fixed + inset:0 → 完全貼合 viewport，
+              與 PixiJS canvas 同一座標系，不受 #root safe-area padding 偏移 */}
         {currentPage === 'room' && (
-          <div style={{ position: 'absolute', inset: 0 }}>
-            {/* 遊戲背景層 */}
+          <div style={{ position: 'fixed', inset: 0 }}>
             <div style={{
-              position: 'absolute', 
-              inset: 0, 
+              position: 'absolute',
+              inset: 0,
               background: 'var(--bg-radial-green)',
-              zIndex: 0 
+              zIndex: 0
             }}></div>
-            
-            {/* Pixi 渲染層 */}
-            <GameCanvas /> 
-            
-            {/* UI 互動層 */}
+            <GameCanvas />
             <GameUI />
           </div>
         )}

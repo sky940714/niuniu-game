@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
-const API_BASE = 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const LIMIT    = 20;
 
-const ZONE_LABELS = { tian: '天', di: '地', xuan: '玄', huang: '黃' };
+const ZONE_LABELS = { tian: '頭', di: '初', xuan: '川', huang: '尾' };
 const ZONES = ['tian', 'di', 'xuan', 'huang'];
 
 // ─── 可展開的單筆紀錄 ─────────────────────────────────────────

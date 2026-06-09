@@ -17,6 +17,24 @@ const TYPE_NAME  = {
     NIU_2: '妞2', NIU_1: '妞1', NO_NIU: '沒妞',
 };
 
+// ── 共用工具函數（避免在 generateResult / forceHand / swapHands 中重複定義）
+const SUIT_CH = { s:'♠', h:'♥', d:'♦', c:'♣' };
+const RANK_CH = { 1:'A', 11:'J', 12:'Q', 13:'K' };
+function toChineseCards(hand) {
+    return hand.map(c => `${SUIT_CH[c.suit]}${RANK_CH[c.rank] || c.rank}`);
+}
+function getTypeName(res) {
+    if (res.type === 'NIU_NIU')        return '妞妞';
+    if (res.type === 'FIVE_SMALL')     return '五小妞';
+    if (res.type === 'BOMB')           return '鐵支妞';
+    if (res.type === 'FULL_HOUSE')     return '葫蘆妞';
+    if (res.type === 'STRAIGHT_FLUSH') return '同花順';
+    if (res.type === 'FIVE_KNIGHTS')   return '五龍妞';
+    if (res.type === 'SILVER_NIU')     return '銀花妞';
+    if (res.niu > 0) return `妞${res.niu}`;
+    return '沒妞';
+}
+
 const PHASES = {
     BETTING: 'BETTING',
     DEALING: 'DEALING',
@@ -147,7 +165,7 @@ class GameTable {
                 break;
 
             case PHASES.RESULT:
-                this.resetGame();
+                await this.resetGame();
                 break;
         }
 
@@ -203,7 +221,14 @@ class GameTable {
 
                 // fallback：隨機發牌（結果不保證符合目標，記入 log）
                 if (!hand) hand = gameLogic.generateRandomHand(excludedCards);
-                if (!hand) hand = gameLogic.createDeck().slice(0, 5);
+                if (!hand) {
+                    // 最後保底：從剩餘牌堆取前 5 張，確保不與已發牌重複
+                    const remaining = gameLogic.createDeck().filter(
+                        c => !excludedCards.some(e => e.suit === c.suit && e.rank === c.rank)
+                    );
+                    hand = remaining.length >= 5 ? remaining.slice(0, 5) : gameLogic.createDeck().slice(0, 5);
+                    console.warn(`⚠️ [RNG] ${zone} 門最終 fallback，使用剩餘牌堆`);
+                }
 
                 hands[zone] = hand;
                 excludedCards.push(...hand);
@@ -211,23 +236,6 @@ class GameTable {
             }
 
             // ── 3. 轉換顯示格式 ──────────────────────────────────
-            const suitMap = { s:'♠', h:'♥', d:'♦', c:'♣' };
-            const rankMap = { 1:'A', 11:'J', 12:'Q', 13:'K' };
-            const toChineseCards = (hand) =>
-                hand.map(c => `${suitMap[c.suit]}${rankMap[c.rank] || c.rank}`);
-
-            const getTypeName = (res) => {
-                if (res.type === 'NIU_NIU')        return '妞妞';
-                if (res.type === 'FIVE_SMALL')     return '五小妞';
-                if (res.type === 'BOMB')           return '鐵支妞';
-                if (res.type === 'FULL_HOUSE')     return '葫蘆妞';
-                if (res.type === 'STRAIGHT_FLUSH') return '同花順';
-                if (res.type === 'FIVE_KNIGHTS')   return '五龍妞';
-                if (res.type === 'SILVER_NIU')     return '銀花妞';
-                if (res.niu > 0) return `妞${res.niu}`;
-                return '沒妞';
-            };
-
             Object.keys(results).forEach(key => {
                 results[key].chineseHand = toChineseCards(hands[key]);
                 results[key].typeName    = getTypeName(results[key]);
@@ -275,23 +283,6 @@ class GameTable {
         hands[zone] = newHand;
         results[zone] = gameLogic.calculateHand(newHand);
 
-        const toChineseCards = (hand) => {
-            const sm = { s:'♠', h:'♥', d:'♦', c:'♣' };
-            const rm = { 1:'A', 11:'J', 12:'Q', 13:'K' };
-            return hand.map(c => `${sm[c.suit]}${rm[c.rank] || c.rank}`);
-        };
-        const getTypeName = (res) => {
-            if (res.type === 'NIU_NIU')        return '妞妞';
-            if (res.type === 'FIVE_SMALL')     return '五小妞';
-            if (res.type === 'BOMB')           return '鐵支妞';
-            if (res.type === 'FULL_HOUSE')     return '葫蘆妞';
-            if (res.type === 'STRAIGHT_FLUSH') return '同花順';
-            if (res.type === 'FIVE_KNIGHTS')   return '五龍妞';
-            if (res.type === 'SILVER_NIU')     return '銀花妞';
-            if (res.niu > 0) return `妞${res.niu}`;
-            return '沒妞';
-        };
-
         results[zone].chineseHand = toChineseCards(newHand);
         results[zone].typeName    = getTypeName(results[zone]);
 
@@ -318,25 +309,6 @@ class GameTable {
         results[targetA] = gameLogic.calculateHand(hands[targetA]);
         results[targetB] = gameLogic.calculateHand(hands[targetB]);
 
-        // [修正] 同步更新中文 (邏輯同 generateResult)
-        const toChineseCards = (hand) => {
-            const suitMap = { 's': '♠', 'h': '♥', 'd': '♦', 'c': '♣' };
-            const rankMap = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K' };
-            return hand.map(c => `${suitMap[c.suit] || c.suit}${rankMap[c.rank] || c.rank}`);
-        };
-
-        const getTypeName = (res) => {
-            if (res.type === 'NIU_NIU')        return '妞妞';
-            if (res.type === 'FIVE_SMALL')     return '五小妞';
-            if (res.type === 'BOMB')           return '鐵支妞';
-            if (res.type === 'FULL_HOUSE')     return '葫蘆妞';
-            if (res.type === 'STRAIGHT_FLUSH') return '同花順';
-            if (res.type === 'FIVE_KNIGHTS')   return '五龍妞';
-            if (res.type === 'SILVER_NIU')     return '銀花妞';
-            if (res.niu > 0) return `妞${res.niu}`;
-            return '沒妞';
-        };
-        
         [targetA, targetB].forEach(key => {
             results[key].chineseHand = toChineseCards(hands[key]);
             results[key].typeName = getTypeName(results[key]);
@@ -358,18 +330,19 @@ class GameTable {
         const w = this.roundResult.winners;
 
         // 真人莊家結算累計
-        let bankerPays     = 0; // 莊家需支付給玩家的總額
-        let bankerReceives = 0; // 莊家收到的總額（玩家輸的本金 + 追賠）
+        let bankerPays     = 0; // 莊家實際支出（獲利部分，不含玩家自身本金）
+        let bankerReceives = 0; // 莊家實際收入（玩家輸掉的本金 + 追賠）
         const hasBanker    = bankerManager.isActive();
 
         for (const socket of sockets) {
             if (!socket.user) continue;
             const bets = betManager.getPlayerBet(socket.user.db_id);
 
-            let totalBet       = 0;
-            let totalWin       = 0;
-            let totalExtraLoss = 0;
-            let totalLostBets  = 0; // 輸掉的本金（用於莊家收款計算）
+            let totalBet        = 0;
+            let totalWin        = 0;
+            let totalWinProfit  = 0; // 莊家實際支付的獲利（不含玩家本金）
+            let totalExtraLoss  = 0;
+            let totalLostBets   = 0;
 
             for (const [zone, amount] of Object.entries(bets)) {
                 if (amount <= 0) continue;
@@ -378,7 +351,8 @@ class GameTable {
                 if (w[zone]) {
                     // ✅ 玩家贏：退回本金 + 閒家牌型倍率獲利（扣 5% 手續費）
                     const profit = Math.floor(amount * r[zone].multiplier * 0.95);
-                    totalWin += (amount + profit);
+                    totalWin       += (amount + profit);
+                    totalWinProfit += profit; // 莊家只需支付獲利，本金是玩家自己的
                 } else {
                     // ❌ 玩家輸：本金下注時已扣，此處按莊家倍率追加賠付
                     const extraLoss = Math.floor(amount * (r.banker.multiplier - 1));
@@ -389,9 +363,9 @@ class GameTable {
 
             if (totalBet === 0) continue;
 
-            // 累計莊家金流
+            // 累計莊家金流（正確計算：贏家只扣獲利，輸家收全額本金+追賠）
             if (hasBanker) {
-                bankerPays     += totalWin;
+                bankerPays     += totalWinProfit;
                 bankerReceives += totalLostBets + totalExtraLoss;
             }
 
@@ -506,11 +480,17 @@ class GameTable {
 
             if (totalTriggerBet <= 0) return;
 
-            // 按比例分配彩金
+            // 按比例分配彩金（最後一位贏家拿走舍入剩餘，確保總額不消失）
             const winnersDetail = [];
-            for (const { socket, zone, betAmount } of bettors) {
-                const share = Math.floor(jackpotPaid * (betAmount / totalTriggerBet));
+            let distributed = 0;
+            for (let idx = 0; idx < bettors.length; idx++) {
+                const { socket, zone, betAmount } = bettors[idx];
+                const isLast = idx === bettors.length - 1;
+                const share = isLast
+                    ? jackpotPaid - distributed  // 剩餘全給最後一人
+                    : Math.floor(jackpotPaid * (betAmount / totalTriggerBet));
                 if (share <= 0) continue;
+                distributed += share;
                 await UserService.updateBalance(socket.user.db_id, share);
                 socket.user.balance += share;
                 socket.emit('update_balance', { balance: socket.user.balance });
@@ -554,7 +534,7 @@ class GameTable {
         }
     }
 
-    resetGame() {
+    async resetGame() {
         this.phase = PHASES.BETTING;
         this.countdown = TIMING.BETTING_DURATION;
         this.isBetLocked = false;
@@ -562,10 +542,10 @@ class GameTable {
         this.generateResult();
         console.log("🆕 新局開始，牌局結果已預先生成");
         betManager.reset();
-        // 真人莊家：每局開始重算每門上限
-        bankerManager.onRoundStart();
+        // 真人莊家：新局開始才接班或重算每門上限
+        await bankerManager.onNewRound();
         betManager.bankerPerZoneCap = bankerManager.getPerZoneCap();
-        this.io.emit('update_table_bets', { tian: 0, di: 0, xuan: 0, huang: 0 });
+        // 不在此處廣播 update_table_bets；前端在收到 phase_change(BETTING) 時已 setTableChips([]) 清空
         botManager.prepareBotsForRound();
         botManager.startBettingRoutine();
     }

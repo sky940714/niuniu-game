@@ -83,12 +83,8 @@ class BankerManager {
 
         console.log(`👑 [Banker] ${username} 加入排隊，凍結 $${amount.toLocaleString()}，隊列 ${this.queue.length}/${QUEUE_LIMIT}`);
 
-        // 若目前無莊家，立即上莊
-        if (!this.activeSession) {
-            await this._startNext();
-        } else {
-            this._broadcast();
-        }
+        // 統一等新局開始才上莊，避免局中插入
+        this._broadcast();
 
         return { success: true, perZoneCap: this._calcCap(amount) };
     }
@@ -110,9 +106,14 @@ class BankerManager {
         return { success: true };
     }
 
-    // ── 每局開始時重算 cap ────────────────────────────────────────
-    onRoundStart() {
-        if (!this.activeSession) return;
+    // ── 新局開始：接班或重算 cap ──────────────────────────────────
+    async onNewRound() {
+        if (!this.activeSession) {
+            // 佇列有人 → 現在才正式啟動
+            if (this.queue.length > 0) await this._startNext();
+            return;
+        }
+        // 已有莊家 → 只重算每門上限
         this.activeSession.perZoneCap = this._calcCap(this.activeSession.currentFrozen);
         this._broadcast();
     }
@@ -147,6 +148,32 @@ class BankerManager {
         if (!this.activeSession) return { success: false, msg: '目前無莊家' };
         await this._endSession(true);
         return { success: true };
+    }
+
+    // ── 玩家主動下莊 ─────────────────────────────────────────────
+    async playerQuit(userId) {
+        if (!this.activeSession) return { success: false, msg: '目前無莊家' };
+        if (this.activeSession.userId !== userId) return { success: false, msg: '您不是當前莊家' };
+        await this._endSession(true);
+        return { success: true };
+    }
+
+    // ── 斷線時自動取消（排隊或做莊）────────────────────────────
+    async cancelOnDisconnect(userId) {
+        // 在排隊中 → 退款並移除
+        const idx = this.queue.findIndex(q => q.userId === userId);
+        if (idx !== -1) {
+            const q = this.queue.splice(idx, 1)[0];
+            await UserService.updateBalance(userId, q.frozenAmount);
+            await BankerService.setQueueStatus(q.queueId, 'cancelled');
+            console.log(`👑 [Banker] 玩家斷線，取消排隊退還 $${q.frozenAmount.toLocaleString()}`);
+            this._broadcast();
+        }
+        // 正在做莊 → 強制下莊（餘額仍會存入 DB，玩家重連後餘額正確）
+        if (this.activeSession?.userId === userId) {
+            console.log(`👑 [Banker] 莊家斷線，強制下莊`);
+            await this._endSession(true);
+        }
     }
 
     // ── 啟動下一位莊家 ───────────────────────────────────────────

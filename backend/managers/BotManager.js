@@ -1,5 +1,6 @@
 // backend/managers/BotManager.js
 const names = ["旺財", "賭神高進", "小飛俠", "大富翁", "贏家", "Lucky7", "發發發", "阿土伯", "陳小刀", "包租公"];
+const bankerManager = require('./BankerManager');
 
 class BotManager {
     constructor() {
@@ -52,9 +53,14 @@ class BotManager {
                 // 隨機選門 (0:天, 1:地, 2:玄, 3:黃)
                 const zoneId = Math.floor(Math.random() * 4);
                 
-                // 隨機金額 (從你的籌碼列表選)
-                const chips = [100, 500, 1000, 5000];
-                const amount = chips[Math.floor(Math.random() * chips.length)];
+                // 隨機金額，有真人莊家時不超過每門上限
+                const perZoneCap = bankerManager.getPerZoneCap();
+                const allChips = [100, 500, 1000, 5000];
+                const validChips = perZoneCap
+                    ? allChips.filter(c => c <= perZoneCap)
+                    : allChips;
+                const chipPool = validChips.length > 0 ? validChips : [100];
+                const amount = chipPool[Math.floor(Math.random() * chipPool.length)];
 
                 // 執行機器人下注
                 this.placeBotBet(bot, zoneId, amount);

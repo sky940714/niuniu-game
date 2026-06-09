@@ -19,18 +19,19 @@ const { JACKPOT } = require('./config/gameRules');
 
 const app = express();
 app.use(express.json());
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+    : ["http://localhost:5173", "http://localhost:5174"];
+
 app.use(cors({
-    origin: [
-        "http://localhost:5173",
-        "http://localhost:5174"
-    ],
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
     credentials: true
 }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
+    cors: { origin: ALLOWED_ORIGINS, methods: ["GET", "POST"] }
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Prestige_NiuNiu_Super_Secret_2026';
@@ -188,9 +189,12 @@ io.on('connection', (socket) => {
                 });
 
                 socket.emit('init_state', {
-                    phase: gameTable.phase,
-                    countdown: gameTable.countdown,
-                    tableBets: betManager.tableBets
+                    phase:        gameTable.phase,
+                    countdown:    gameTable.countdown,
+                    tableBets:    betManager.tableBets,
+                    myBets:       betManager.getPlayerBet(user.id),
+                    jackpotAmount: Math.floor(gameTable.jackpotAmount),
+                    bankerStatus:  bankerManager.getStatus(),
                 });
             } else {
                 // 帳號不存在或密碼錯誤 → 同一訊息，防止枚舉
@@ -271,10 +275,22 @@ io.on('connection', (socket) => {
         socket.emit('cancel_apply_result', result);
     });
 
-    socket.on('disconnect', () => {
+    // 8. 玩家主動下莊
+    socket.on('quit_banker', async () => {
+        if (!socket.user) return socket.emit('error_msg', '請先登入');
+        const result = await bankerManager.playerQuit(socket.user.db_id);
+        socket.emit('quit_banker_result', result);
+    });
+
+    socket.on('disconnect', async () => {
         if (socket.user) {
             if (activeSessions.get(socket.user.db_id) === socket.id) {
                 activeSessions.delete(socket.user.db_id);
+            }
+            try {
+                await bankerManager.cancelOnDisconnect(socket.user.db_id);
+            } catch (err) {
+                console.error(`⚠️ [Disconnect] 斷線清理異常 (user ${socket.user.db_id}):`, err.message);
             }
         }
     });

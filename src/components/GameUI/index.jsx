@@ -18,8 +18,6 @@ import chip1000Img from '../../assets/chips/chip_1000.png';
 import chip5000Img from '../../assets/chips/chip_5000.png';
 import chip10000Img from '../../assets/chips/chip_10000.png';
 
-import frameDealerImg from '../../assets/ui/frame_dealer.png';
-import iconJackpotImg from '../../assets/ui/icon_jackpot.png';
 import btnSettingsImg from '../../assets/buttons/btn_settings.png';
 
 // B 模式風控參數 (需與後端 BetManager.js MAX_PAYOUT_ODDS 一致)
@@ -36,10 +34,10 @@ const CHIPS = [
 ];
 
 const ZONES = [
-  { id: 0, top: '30%', left: '17%',    width: '14%', height: '48%', label: '天', color: '#64b5f6' },
-  { id: 1, top: '30%', left: '33.8%',  width: '14%', height: '48%', label: '地', color: '#ffee58' },
-  { id: 2, top: '30%', left: '50.6%',  width: '14%', height: '48%', label: '玄', color: '#66bb6a' },
-  { id: 3, top: '30%', left: '67.25%', width: '14%', height: '48%', label: '黃', color: '#ef5350' },
+  { id: 0, top: '30%', left: '13%',  width: '14%', height: '48%', label: '頭', color: '#64b5f6' },
+  { id: 1, top: '30%', left: '33%',  width: '14%', height: '48%', label: '初', color: '#ffee58' },
+  { id: 2, top: '30%', left: '53%',  width: '14%', height: '48%', label: '川', color: '#66bb6a' },
+  { id: 3, top: '30%', left: '73%',  width: '14%', height: '48%', label: '尾', color: '#ef5350' },
 ];
 
 const ZONE_KEYS = ['tian', 'di', 'xuan', 'huang'];
@@ -51,19 +49,19 @@ const PHASES = {
     RESULT:    'RESULT',
 };
 
-const getRandomPositionInZone = (zoneId) => {
-    const zone = ZONES.find(z => z.id === zoneId);
-    if (!zone) return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    const parse = (val, max) => (parseFloat(val) / 100) * max;
-    const x = parse(zone.left, window.innerWidth);
-    const y = parse(zone.top, window.innerHeight);
-    const w = parse(zone.width, window.innerWidth);
-    const h = parse(zone.height, window.innerHeight);
-    const centerX = x + (w / 2);
-    const centerY = y + (h / 2);
-    const offsetX = (Math.random() - 0.5) * (w * 0.4);
-    const offsetY = (Math.random() - 0.5) * (h * 0.5);
-    return { x: centerX + offsetX, y: centerY + offsetY };
+const CHIP_RADIUS = 28; // 籌碼顯示半徑（scale 0.5 × 55px）
+
+// 用 DOM rect 計算隨機落點，確保不依賴手動百分比計算
+const getChipPosFromRect = (rect) => {
+    if (!rect) return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    const minX = rect.left + CHIP_RADIUS;
+    const maxX = rect.right - CHIP_RADIUS;
+    const minY = rect.top + CHIP_RADIUS;
+    const maxY = rect.bottom - CHIP_RADIUS;
+    return {
+        x: minX + Math.random() * Math.max(0, maxX - minX),
+        y: minY + Math.random() * Math.max(0, maxY - minY),
+    };
 };
 
 // ─── 小型圖示按鈕（emoji + 文字標籤）─────────────────────────
@@ -104,6 +102,7 @@ const GameUI = () => {
 
   const [tableChips, setTableChips] = useState([]);
   const chipsRowRef = useRef(null);
+  const zoneRefs    = useRef({});  // { [zoneId]: HTMLElement }
   const [selectedChipVal, setSelectedChipVal] = useState(100);
   const [history, setHistory] = useState([]);
 
@@ -125,6 +124,7 @@ const GameUI = () => {
   // ── 莊家系統 ──
   const [bankerStatus, setBankerStatus] = useState({ hasBanker: false, banker: null, queue: [], queueCount: 0, queueLimit: 5, minFrozen: 100000 });
   const [showBankerModal, setShowBankerModal] = useState(false);
+  const [showBankerManageModal, setShowBankerManageModal] = useState(false);
   const [bankerFrozenInput, setBankerFrozenInput] = useState('');
   const [bankerApplying, setBankerApplying] = useState(false);
   const [bankerEndPopup, setBankerEndPopup] = useState(null); // { isForced, finalFrozen, netPnl, roundsPlayed }
@@ -305,19 +305,14 @@ const GameUI = () => {
 
     const onUpdateTableBets = (data) => {
         if (data.username === username) return;
-        if (!data.isBot && data.zoneId !== undefined && data.amount) {
-            setCurrentBets(prev => ({
-                ...prev,
-                [data.zoneId]: (prev[data.zoneId] || 0) + data.amount
-            }));
-        }
-        const targetPos = getRandomPositionInZone(data.zoneId);
-        const chipData = CHIPS.find(c => c.val === data.amount) || CHIPS[0];
+        // 僅為自己追蹤 currentBets（由 handleBetZone 直接更新）
+        // 其他玩家（含機器人）的下注只播放籌碼動畫，不影響本地風控計算
+        const zoneEl    = zoneRefs.current[data.zoneId];
+        const targetPos = getChipPosFromRect(zoneEl?.getBoundingClientRect());
+        const chipData  = CHIPS.find(c => c.val === data.amount) || CHIPS[0];
         const newChip = {
             id: `bot_chip_${Date.now()}_${Math.random()}`,
             val: data.amount, img: chipData.img,
-            startX: Math.random() * window.innerWidth,
-            startY: window.innerHeight + 100,
             targetX: targetPos.x, targetY: targetPos.y,
             targetZoneId: data.zoneId,
         };
@@ -350,6 +345,11 @@ const GameUI = () => {
     };
     const onCancelResult = (res) => {
         if (!res.success) alert(res.msg || '取消失敗');
+        else setShowBankerManageModal(false);
+    };
+    const onQuitBankerResult = (res) => {
+        if (!res.success) alert(res.msg || '下莊失敗');
+        else setShowBankerManageModal(false);
     };
 
     socket.on('time_tick',        onTimeTick);
@@ -367,6 +367,7 @@ const GameUI = () => {
     socket.on('banker_ended',         onBankerEnded);
     socket.on('apply_banker_result',  onApplyResult);
     socket.on('cancel_apply_result',  onCancelResult);
+    socket.on('quit_banker_result',   onQuitBankerResult);
 
     if (socket.connected) socket.emit('request_state');
 
@@ -386,19 +387,32 @@ const GameUI = () => {
         socket.off('banker_ended',         onBankerEnded);
         socket.off('apply_banker_result',  onApplyResult);
         socket.off('cancel_apply_result',  onCancelResult);
+        socket.off('quit_banker_result',   onQuitBankerResult);
         clearTimeout(resultPopupTimerRef.current);
         clearTimeout(jackpotWinTimerRef.current);
     };
   }, [username]);
 
+  // ── 莊家推導狀態（必須在所有參照它的 useEffect 之前宣告）────────
+  const iAmBanker  = !!(bankerStatus.banker && bankerStatus.banker.username === username);
+  const iAmInQueue = !!(bankerStatus.queue?.some(q => q.username === username));
+
+  // ── 做莊中離開頁面警告 ────────────────────────────────────────
+  useEffect(() => {
+    if (!iAmBanker) return;
+    const handler = (e) => {
+        e.preventDefault();
+        e.returnValue = '您正在做莊中，離開或重整將強制下莊並結算！';
+        return e.returnValue;
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [iAmBanker]);
+
   useEffect(() => {
     setHistory(gameApp.history);
     gameApp.onHistoryChange = (newHistory) => setHistory(newHistory);
   }, []);
-
-  // ── 莊家推導狀態 ─────────────────────────────────────────────
-  const iAmBanker  = !!(bankerStatus.banker && bankerStatus.banker.username === username);
-  const iAmInQueue = !!(bankerStatus.queue?.some(q => q.username === username));
 
   const handleApplyBanker = () => {
     const amount = parseInt(bankerFrozenInput.replace(/,/g, ''), 10);
@@ -409,6 +423,11 @@ const GameUI = () => {
 
   const handleCancelApply = () => {
     socket.emit('cancel_apply');
+  };
+
+  const handleQuitBanker = () => {
+    if (!window.confirm('確認下莊？凍結金將依盈虧結算後退還。')) return;
+    socket.emit('quit_banker');
   };
 
   // ── 下注 ─────────────────────────────────────────────────────
@@ -429,16 +448,13 @@ const GameUI = () => {
     setCurrentBets(prev => ({ ...prev, [zoneId]: prev[zoneId] + selectedChipVal }));
     setTotalContributions(prev => prev + Math.ceil(selectedChipVal * JACKPOT_RATE));
 
-    const targetPos  = getRandomPositionInZone(zoneId);
-    const chipIndex  = CHIPS.findIndex(c => c.val === selectedChipVal);
-    const startRect  = chipsRowRef.current?.children[chipIndex]?.getBoundingClientRect();
-    const chipData   = CHIPS.find(c => c.val === selectedChipVal);
+    const zoneEl    = zoneRefs.current[zoneId];
+    const targetPos = getChipPosFromRect(zoneEl?.getBoundingClientRect());
+    const chipData  = CHIPS.find(c => c.val === selectedChipVal);
 
     const newChip = {
         id: Date.now(),
         val: selectedChipVal, img: chipData.img,
-        startX: startRect ? startRect.left : window.innerWidth / 2,
-        startY: startRect ? startRect.top  : window.innerHeight,
         targetX: targetPos.x, targetY: targetPos.y,
         targetZoneId: zoneId,
     };
@@ -508,27 +524,6 @@ const GameUI = () => {
       <div style={styles.backgroundLayer} />
 
       <div style={styles.container}>
-        {/* Top Bar - 僅保留儀表板資訊，按鈕群已移到 fixed panel 脫離 stacking context */}
-        <div style={styles.topBar}>
-            <div style={styles.dashboardGroup}>
-                <div style={styles.jackpotContainer}>
-                  <img src={iconJackpotImg} alt="Jackpot" style={styles.jackpotIcon} />
-                  <div style={styles.jackpotTextCol}>
-                      <div style={styles.jackpotTitle}>User: {username || 'Guest'}</div>
-                      <div style={styles.jackpotNum}>Online</div>
-                  </div>
-                </div>
-                <div style={styles.dealerWrapper}>
-                   <img src={frameDealerImg} alt="Dealer Frame" style={styles.dealerBg} />
-                   <div style={styles.dealerText}>莊 Dealer</div>
-                </div>
-                {/* 彩金池顯示 */}
-                <div style={jackpotStyles.poolBar}>
-                    <div style={jackpotStyles.poolLabel}>🏆 彩金池</div>
-                    <div style={jackpotStyles.poolAmount}>${jackpotAmount.toLocaleString()}</div>
-                </div>
-            </div>
-        </div>
 
         {/* Countdown Timer */}
         <div style={styles.timerOverlay}>
@@ -545,6 +540,7 @@ const GameUI = () => {
                 return (
                     <div
                       key={zone.id}
+                      ref={el => { zoneRefs.current[zone.id] = el; }}
                       style={{
                           ...styles.bettingZone,
                           position: 'absolute',
@@ -559,7 +555,13 @@ const GameUI = () => {
                       onClick={() => handleBetZone(zone.id)}
                     >
                         <div style={{...styles.zoneLabel, color: zone.color}}>{zone.label}</div>
-                        <div style={styles.zoneRate}>最高 7.6 : 1</div>
+                        {bankerStatus.hasBanker && bankerStatus.banker?.perZoneCap ? (
+                            <div style={styles.zoneCapBadge}>
+                                上限 ${bankerStatus.banker.perZoneCap.toLocaleString()}
+                            </div>
+                        ) : (
+                            <div style={styles.zoneRate}>最高 7.6:1</div>
+                        )}
                         {currentBets[zone.id] > 0 && (
                             <div style={styles.zoneTotalBet}>${currentBets[zone.id]}</div>
                         )}
@@ -576,47 +578,46 @@ const GameUI = () => {
             ))}
         </div>
 
-        {/* Bottom Bar */}
-        <div style={styles.bottomBar}>
-            <div style={styles.bottomLeftGroup}>
-              <div style={styles.balanceBox}>
-                  <div style={styles.balanceLabel}>💰 餘額</div>
-                  <div style={styles.balanceNum}>$ {balance.toLocaleString()}</div>
-              </div>
-              <div style={styles.betBox}>
-                  <div style={styles.balanceLabel}>🎯 總扣除</div>
-                  <div style={styles.balanceNum}>$ {(totalCurrentBet + totalContributions).toLocaleString()}</div>
-                  {totalContributions > 0 && (
-                      <div style={{ fontSize: '0.55rem', color: '#D4AF37', marginTop: '1px' }}>
-                          下注 ${totalCurrentBet.toLocaleString()} + 彩金 ${totalContributions.toLocaleString()}
-                      </div>
-                  )}
-              </div>
-            </div>
-
-            <div style={{
-                ...styles.chipsRow,
-                opacity: (isBettingPhase && isLoggedIn && !isBetLocked) ? 1 : 0.5,
-            }} ref={chipsRowRef}>
-                {CHIPS.map((chip) => {
-                    const canAfford = chip.val <= maxAffordableBet;
-                    return (
-                        <div
-                          key={chip.val}
-                          style={{
-                              ...styles.chipWrapper,
-                              transform: selectedChipVal === chip.val ? 'scale(1.15) translateY(-10px)' : 'scale(1)',
-                              filter: (!isBettingPhase || !canAfford || isBetLocked) ? 'grayscale(1) opacity(0.5)' : 'none',
-                              cursor: (isBettingPhase && canAfford && !isBetLocked) ? 'pointer' : 'not-allowed',
-                          }}
-                          onClick={() => handleSelectChip(chip.val)}
-                        >
-                            <img src={chip.img} alt={chip.val} style={styles.chipImg} />
-                        </div>
-                    );
-                })}
-            </div>
+        {/* 右下：籌碼選擇 */}
+        <div style={{
+            ...styles.chipsRow,
+            opacity: (isBettingPhase && isLoggedIn && !isBetLocked) ? 1 : 0.5,
+        }} ref={chipsRowRef}>
+            {CHIPS.map((chip) => {
+                const canAfford = chip.val <= maxAffordableBet;
+                return (
+                    <div
+                      key={chip.val}
+                      style={{
+                          ...styles.chipWrapper,
+                          transform: selectedChipVal === chip.val ? 'scale(1.2) translateY(-8px)' : 'scale(1)',
+                          filter: (!isBettingPhase || !canAfford || isBetLocked) ? 'grayscale(1) opacity(0.5)' : 'none',
+                          cursor: (isBettingPhase && canAfford && !isBetLocked) ? 'pointer' : 'not-allowed',
+                      }}
+                      onClick={() => handleSelectChip(chip.val)}
+                    >
+                        <img src={chip.img} alt={chip.val} style={styles.chipImg} />
+                    </div>
+                );
+            })}
         </div>
+      </div>
+
+      {/* 左下：餘額 + 總扣除（移出 container 避免 overflow 截斷） */}
+      <div style={styles.bottomLeft}>
+          <div style={styles.balanceBox}>
+              <div style={styles.balanceLabel}>💰 餘額</div>
+              <div style={styles.balanceNum}>$ {Number(balance).toLocaleString()}</div>
+          </div>
+          <div style={styles.betBox}>
+              <div style={styles.balanceLabel}>🎯 總扣除</div>
+              <div style={styles.balanceNum}>$ {Number(totalCurrentBet + totalContributions).toLocaleString()}</div>
+              {totalContributions > 0 && (
+                  <div style={{ fontSize: '0.55rem', color: '#D4AF37', marginTop: '1px', whiteSpace: 'nowrap' }}>
+                      下注 ${Number(totalCurrentBet).toLocaleString()} + 彩金 ${Number(totalContributions).toLocaleString()}
+                  </div>
+              )}
+          </div>
       </div>
 
       {/* 限紅顯示（固定於下方，不擋操作） */}
@@ -628,6 +629,12 @@ const GameUI = () => {
           position:fixed + zIndex:9997 → 完全脫離 container (zIndex:20) 與
           Pixi canvas parent (發牌時升至 zIndex:55) 的 stacking context，
           任何遊戲階段都可點擊                                              */}
+      {/* 彩金池：獨立 fixed 定位，右上角，不干擾按鈕欄寬度 */}
+      <div style={jackpotStyles.poolBar}>
+          <div style={jackpotStyles.poolLabel}>🏆 彩金池</div>
+          <div style={jackpotStyles.poolAmount}>${jackpotAmount.toLocaleString()}</div>
+      </div>
+
       <div style={styles.fixedBtns}>
           <div onClick={handleBackToLobby} style={styles.iconBtnWrapper}>
               <img src={btnSettingsImg} style={styles.iconBtnImg} alt="設定" />
@@ -638,37 +645,16 @@ const GameUI = () => {
           </div>
           <SmallBtn emoji="📜" label="紀錄" onClick={() => setShowBetHistory(true)} />
           {iAmBanker ? (
-              <SmallBtn emoji="👑" label="做莊中" onClick={() => {}} />
+              <SmallBtn emoji="👑" label="做莊中" onClick={() => setShowBankerManageModal(true)} />
           ) : iAmInQueue ? (
-              <SmallBtn emoji="⏳" label="排隊中" onClick={handleCancelApply} />
+              <SmallBtn emoji="⏳" label="排隊中" onClick={() => setShowBankerManageModal(true)} />
           ) : (
               <SmallBtn emoji="🏦" label="申請上莊" onClick={() => setShowBankerModal(true)} />
           )}
       </div>
 
-      {/* 莊家狀態欄（有真人莊家時顯示在畫面頂部） */}
-      {bankerStatus.hasBanker && bankerStatus.banker && (
-          <div style={bankerStyles.statusBar}>
-              <span style={bankerStyles.statusBarIcon}>👑</span>
-              <span style={bankerStyles.statusBarName}>{bankerStatus.banker.username}</span>
-              <span style={bankerStyles.statusBarDivider}>｜</span>
-              <span style={bankerStyles.statusBarItem}>每門上限 <b>${bankerStatus.banker.perZoneCap?.toLocaleString()}</b></span>
-              <span style={bankerStyles.statusBarDivider}>｜</span>
-              <span style={bankerStyles.statusBarItem}>剩 <b>{bankerStatus.banker.roundsLeft}</b> 局</span>
-              {iAmBanker && (
-                  <>
-                      <span style={bankerStyles.statusBarDivider}>｜</span>
-                      <span style={{
-                          ...bankerStyles.statusBarItem,
-                          color: bankerStatus.banker.netPnl >= 0 ? '#4caf50' : '#ef5350',
-                          fontWeight: 'bold',
-                      }}>
-                          {bankerStatus.banker.netPnl >= 0 ? '+' : ''}${bankerStatus.banker.netPnl?.toLocaleString()}
-                      </span>
-                  </>
-              )}
-          </div>
-      )}
+      {/* 莊家資訊面板 */}
+      <BankerPanel bankerStatus={bankerStatus} iAmBanker={iAmBanker} />
 
       {/* ↓ 以下所有 overlay 必須在 container 外，否則被 zIndex:20 stacking context 鎖住 */}
 
@@ -731,6 +717,84 @@ const GameUI = () => {
                       {roundResultPopup.net >= 0 ? '+' : ''}{roundResultPopup.net.toLocaleString()}
                   </div>
                   <div style={styles.resultHint}>點擊關閉</div>
+              </div>
+          </div>
+      )}
+
+      {/* 莊家管理 Modal（排隊中 / 做莊中 共用） */}
+      {showBankerManageModal && (
+          <div style={styles.modalOverlay} onClick={() => setShowBankerManageModal(false)}>
+              <div style={bankerStyles.applyPanel} onClick={e => e.stopPropagation()}>
+                  {iAmBanker ? (
+                      <>
+                          <div style={styles.modalTitle}>👑 做莊管理</div>
+                          <div style={bankerStyles.applyInfoBox}>
+                              <div style={bankerStyles.applyInfoRow}>
+                                  莊家
+                                  <span style={{ color: '#FFD700', fontWeight: 800 }}>{bankerStatus.banker?.username}</span>
+                              </div>
+                              <div style={bankerStyles.applyInfoRow}>
+                                  凍結金
+                                  <span>${bankerStatus.banker?.initialFrozen?.toLocaleString()}</span>
+                              </div>
+                              <div style={bankerStyles.applyInfoRow}>
+                                  每門上限
+                                  <span style={{ color: '#FFD700', fontWeight: 700 }}>${bankerStatus.banker?.perZoneCap?.toLocaleString()}</span>
+                              </div>
+                              <div style={bankerStyles.applyInfoRow}>
+                                  已做局數
+                                  <span>{bankerStatus.banker?.roundsPlayed} / 10 局</span>
+                              </div>
+                              <div style={{ ...bankerStyles.applyInfoRow, borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 8, marginTop: 4 }}>
+                                  當前盈虧
+                                  <span style={{
+                                      fontWeight: 800,
+                                      color: (bankerStatus.banker?.netPnl ?? 0) >= 0 ? '#4caf50' : '#ef5350',
+                                  }}>
+                                      {(bankerStatus.banker?.netPnl ?? 0) >= 0 ? '+' : ''}${bankerStatus.banker?.netPnl?.toLocaleString() ?? 0}
+                                  </span>
+                              </div>
+                          </div>
+                          <button style={{ ...styles.modalBtnLogout, marginTop: '12px' }} onClick={handleQuitBanker}>
+                              申請下莊
+                          </button>
+                      </>
+                  ) : (
+                      <>
+                          <div style={styles.modalTitle}>⏳ 排隊管理</div>
+                          <div style={bankerStyles.applyInfoBox}>
+                              {(() => {
+                                  const myQ = bankerStatus.queue?.find(q => q.username === username);
+                                  return myQ ? (
+                                      <>
+                                          <div style={bankerStyles.applyInfoRow}>
+                                              排隊位置
+                                              <span style={{ color: '#FFD700', fontWeight: 800 }}>第 {myQ.position} 位</span>
+                                          </div>
+                                          <div style={bankerStyles.applyInfoRow}>
+                                              凍結金
+                                              <span>${myQ.frozenAmount?.toLocaleString()}</span>
+                                          </div>
+                                          <div style={bankerStyles.applyInfoRow}>
+                                              預計每門上限
+                                              <span>${myQ.perZoneCap?.toLocaleString()}</span>
+                                          </div>
+                                      </>
+                                  ) : <div style={{ color: '#aaa', fontSize: '0.85rem' }}>找不到排隊資訊</div>;
+                              })()}
+                              {bankerStatus.hasBanker && bankerStatus.banker && (
+                                  <div style={{ ...bankerStyles.applyInfoRow, marginTop: 6 }}>
+                                      前方莊家
+                                      <span>{bankerStatus.banker.username}（剩 {bankerStatus.banker.roundsLeft} 局）</span>
+                                  </div>
+                              )}
+                          </div>
+                          <button style={{ ...styles.modalBtnLogout, marginTop: '12px' }} onClick={handleCancelApply}>
+                              取消排隊（退還凍結金）
+                          </button>
+                      </>
+                  )}
+                  <button style={styles.modalBtnCancel} onClick={() => setShowBankerManageModal(false)}>關閉</button>
               </div>
           </div>
       )}
@@ -838,13 +902,103 @@ const GameUI = () => {
   );
 };
 
+// ─── 莊家資訊面板元件 ─────────────────────────────────────────
+const BankerPanel = ({ bankerStatus, iAmBanker }) => {
+    const b = bankerStatus?.banker;
+    const hasHumanBanker = !!(bankerStatus?.hasBanker && b);
+
+    return (
+        <div style={bankerPanelStyles.wrap}>
+            <div style={bankerPanelStyles.iconRow}>
+                <span style={bankerPanelStyles.crown}>
+                    {hasHumanBanker ? '👑' : '🏦'}
+                </span>
+                <span style={bankerPanelStyles.title}>
+                    {hasHumanBanker ? '真人莊家' : '電腦莊家'}
+                </span>
+            </div>
+
+            {hasHumanBanker ? (
+                <>
+                    <div style={bankerPanelStyles.name}>{b.username}</div>
+                    <div style={bankerPanelStyles.row}>
+                        <span style={bankerPanelStyles.label}>剩餘</span>
+                        <span style={bankerPanelStyles.value}>{b.roundsLeft} 局</span>
+                    </div>
+                    <div style={bankerPanelStyles.row}>
+                        <span style={bankerPanelStyles.label}>每門上限</span>
+                        <span style={{...bankerPanelStyles.value, color: '#FFD700', fontWeight: 800}}>
+                            ${b.perZoneCap?.toLocaleString()}
+                        </span>
+                    </div>
+                    {iAmBanker && (
+                        <div style={bankerPanelStyles.pnlRow}>
+                            <span style={bankerPanelStyles.label}>盈虧</span>
+                            <span style={{
+                                ...bankerPanelStyles.value,
+                                color: b.netPnl >= 0 ? '#4caf50' : '#ef5350',
+                                fontWeight: 800,
+                            }}>
+                                {b.netPnl >= 0 ? '+' : ''}${b.netPnl?.toLocaleString()}
+                            </span>
+                        </div>
+                    )}
+                </>
+            ) : (
+                <div style={bankerPanelStyles.sub}>系統自動結算</div>
+            )}
+        </div>
+    );
+};
+
+const bankerPanelStyles = {
+    wrap: {
+        position: 'fixed',
+        top: 'max(10px, calc(env(safe-area-inset-top) + 6px))',
+        left: 'max(10px, calc(env(safe-area-inset-left) + 10px))',
+        zIndex: 9997,
+        background: 'linear-gradient(160deg, rgba(18,12,2,0.92), rgba(40,28,4,0.92))',
+        border: '1px solid rgba(212,175,55,0.45)',
+        borderRadius: '14px',
+        padding: '10px 14px',
+        minWidth: '110px',
+        maxWidth: '150px',
+        pointerEvents: 'none',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+    },
+    iconRow: {
+        display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px',
+    },
+    crown: { fontSize: '1rem' },
+    title: {
+        fontSize: '0.62rem', color: 'rgba(212,175,55,0.8)',
+        fontWeight: 700, letterSpacing: '0.03em',
+    },
+    name: {
+        fontSize: '0.85rem', color: '#FFD700', fontWeight: 800,
+        marginBottom: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    },
+    row: {
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: '3px',
+    },
+    pnlRow: {
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginTop: '4px', paddingTop: '4px',
+        borderTop: '1px solid rgba(212,175,55,0.2)',
+    },
+    label: { fontSize: '0.62rem', color: 'rgba(255,255,255,0.5)' },
+    value: { fontSize: '0.75rem', color: 'rgba(255,255,255,0.85)' },
+    sub:   { fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', marginTop: '2px' },
+};
+
 // ─── 籌碼動畫元件 ─────────────────────────────────────────────
 const ChipOnTable = ({ chip, index }) => {
     const elRef = useRef(null);
     useEffect(() => {
         gsap.fromTo(elRef.current,
-            { x: chip.startX, y: chip.startY, opacity: 0, scale: 1.5 },
-            { x: chip.targetX, y: chip.targetY, scale: 0.5, opacity: 1, duration: 0.5, ease: "power2.out" }
+            { x: chip.targetX, y: chip.targetY - 25, opacity: 0, scale: 0.1 },
+            { x: chip.targetX, y: chip.targetY, scale: 0.5, opacity: 1, duration: 0.4, ease: "back.out(1.5)" }
         );
     }, []);
     return (
@@ -871,17 +1025,14 @@ const styles = {
   container: {
       position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
       zIndex: 20, pointerEvents: 'none',
-      display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+      display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
       padding: '10px',
-  },
-  topBar: {
-      pointerEvents: 'none', paddingTop: '10px', zIndex: 30, position: 'relative', height: '15%',
   },
   // 右側固定按鈕群：position:fixed 脫離所有 stacking context
   fixedBtns: {
       position: 'fixed',
-      top: '10px',
-      right: '10px',
+      top: 'max(10px, calc(env(safe-area-inset-top) + 6px))',
+      right: 'max(10px, calc(env(safe-area-inset-right) + 10px))',
       zIndex: 9997,
       display: 'flex',
       flexDirection: 'column',
@@ -889,25 +1040,6 @@ const styles = {
       gap: '5px',
       pointerEvents: 'auto',
   },
-  dashboardGroup: {
-      position: 'absolute', top: '5px', left: '50%', transform: 'translateX(-50%)',
-      display: 'flex', alignItems: 'center', gap: '30px',
-  },
-  jackpotContainer: {
-      display: 'flex', alignItems: 'center',
-      background: 'rgba(0,0,0,0.5)', padding: '2px 10px 2px 5px',
-      borderRadius: '20px', border: '1px solid #ffca28',
-  },
-  jackpotIcon: { width: '30px', marginRight: '5px' },
-  jackpotTextCol: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start' },
-  jackpotTitle: { color: '#ffecb3', fontSize: '0.6rem', lineHeight: '1' },
-  jackpotNum:   { color: '#fff', fontSize: '0.9rem', fontWeight: 'bold', lineHeight: '1.2' },
-  dealerWrapper: {
-      position: 'relative', width: '140px', height: '50px',
-      display: 'flex', justifyContent: 'center', alignItems: 'center',
-  },
-  dealerBg:   { position: 'absolute', width: '100%', height: '100%', objectFit: 'contain' },
-  dealerText: { position: 'relative', zIndex: 1, color: '#3e2723', fontWeight: 'bold', fontSize: '0.9rem', marginTop: '-2px' },
   topRightBtns: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' },
   iconBtnWrapper: { width: '45px', height: '45px', cursor: 'pointer', transition: 'transform 0.1s' },
   iconBtnImg: { width: '100%', height: '100%', objectFit: 'contain' },
@@ -947,6 +1079,12 @@ const styles = {
   },
   zoneLabel:    { fontSize: '1.8rem', fontWeight: 'bold', fontFamily: 'serif', marginBottom: '2px', textShadow: '0 2px 4px #000' },
   zoneRate:     { color: '#aaa', fontSize: '0.7rem', border: '1px solid #555', padding: '2px 4px', borderRadius: '6px' },
+  zoneCapBadge: {
+      color: '#FFD700', fontSize: '0.72rem', fontWeight: 700,
+      border: '1px solid rgba(212,175,55,0.6)',
+      background: 'rgba(212,175,55,0.12)',
+      padding: '2px 6px', borderRadius: '6px',
+  },
   zoneTotalBet: { marginTop: 'auto', marginBottom: '5px', color: '#f1c40f', fontWeight: 'bold', fontSize: '0.9rem', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: '4px' },
   winBadge: {
       position: 'absolute', top: '-15px',
@@ -954,29 +1092,47 @@ const styles = {
       color: '#3e2723', fontSize: '0.8rem', fontWeight: 'bold',
       padding: '2px 10px', borderRadius: '20px', border: '2px solid #fff', zIndex: 10,
   },
-  bottomBar: {
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-      pointerEvents: 'auto', paddingBottom: '10px', gap: '10px', zIndex: 30,
+  bottomBar: { display: 'none' },
+  bottomInfoRow: {},
+  bottomLeftGroup: {},
+  // 左下固定：餘額 + 總扣除
+  bottomLeft: {
+      position: 'fixed',
+      bottom: 'max(18px, calc(env(safe-area-inset-bottom) + 10px))',
+      left: 'max(10px, calc(env(safe-area-inset-left) + 10px))',
+      zIndex: 9990,
+      display: 'flex',
+      flexDirection: 'row',
+      gap: '6px',
+      alignItems: 'flex-end',
+      pointerEvents: 'auto',
   },
-  bottomLeftGroup: { display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-start' },
   balanceBox: {
       background: 'linear-gradient(180deg, #f1c40f 0%, #f57f17 100%)',
       border: '2px solid #fffde7', borderRadius: '8px',
-      padding: '5px 15px', minWidth: '120px', boxShadow: '0 4px 0 #bf360c',
+      padding: '4px 10px', boxShadow: '0 4px 0 #bf360c',
   },
   betBox: {
       background: 'linear-gradient(180deg, #29b6f6 0%, #0288d1 100%)',
       border: '2px solid #e1f5fe', borderRadius: '8px',
-      padding: '5px 15px', minWidth: '120px', boxShadow: '0 4px 0 #01579b',
+      padding: '4px 10px', boxShadow: '0 4px 0 #01579b',
   },
-  balanceLabel: { fontSize: '0.7rem', color: '#3e2723', fontWeight: 'bold' },
-  balanceNum:   { fontSize: '1.1rem', color: '#3e2723', fontWeight: 'bold' },
+  balanceLabel: { fontSize: '0.6rem', color: '#3e2723', fontWeight: 'bold', whiteSpace: 'nowrap' },
+  balanceNum:   { fontSize: '0.88rem', color: '#3e2723', fontWeight: 'bold', whiteSpace: 'nowrap' },
+  // 右下固定：籌碼
   chipsRow: {
-      display: 'flex', gap: '15px', alignItems: 'flex-end',
-      paddingBottom: '5px', overflowX: 'auto', paddingLeft: '10px', pointerEvents: 'auto',
+      position: 'fixed',
+      bottom: 'max(18px, calc(env(safe-area-inset-bottom) + 10px))',
+      right: 'max(10px, calc(env(safe-area-inset-right) + 10px))',
+      zIndex: 9990,
+      display: 'flex',
+      flexDirection: 'row',
+      gap: '6px',
+      alignItems: 'flex-end',
+      pointerEvents: 'auto',
   },
   chipWrapper: {
-      width: '56px', height: '56px',
+      width: '48px', height: '48px',
       display: 'flex', justifyContent: 'center', alignItems: 'center',
       flexShrink: 0, transition: 'all 0.2s', position: 'relative',
   },
@@ -1108,10 +1264,15 @@ const styles = {
 // ─── 彩金池樣式 ───────────────────────────────────────────────
 const jackpotStyles = {
   poolBar: {
+    position: 'fixed',
+    top: 'max(10px, calc(env(safe-area-inset-top) + 6px))',
+    right: 'max(70px, calc(env(safe-area-inset-right) + 70px))',
+    zIndex: 9997,
     display: 'flex', flexDirection: 'column', alignItems: 'center',
     background: 'linear-gradient(135deg, rgba(180,120,0,0.35), rgba(255,215,0,0.15))',
     border: '1px solid rgba(255,215,0,0.5)', borderRadius: '10px',
     padding: '4px 14px', minWidth: '110px',
+    pointerEvents: 'none',
   },
   poolLabel: { fontSize: '0.6rem', color: '#D4AF37', letterSpacing: '0.08em', fontWeight: 700 },
   poolAmount: { fontSize: '1rem', color: '#FFD700', fontWeight: 900, letterSpacing: '0.02em' },
@@ -1141,23 +1302,8 @@ const jackpotStyles = {
   hint:       { color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem' },
 };
 
-// ─── 莊家系統樣式 ─────────────────────────────────────────────
+// ─── 莊家系統樣式（申請上莊 Modal 用）────────────────────────
 const bankerStyles = {
-  statusBar: {
-    position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)',
-    zIndex: 9998, display: 'flex', alignItems: 'center', gap: '6px',
-    background: 'linear-gradient(90deg, rgba(20,14,0,0.92), rgba(50,35,0,0.92))',
-    border: '1px solid rgba(212,175,55,0.5)',
-    borderTop: 'none', borderRadius: '0 0 14px 14px',
-    padding: '4px 18px', fontSize: '0.78rem', color: 'rgba(255,255,255,0.85)',
-    pointerEvents: 'none', whiteSpace: 'nowrap',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-  },
-  statusBarIcon:    { fontSize: '1rem' },
-  statusBarName:    { color: '#FFD700', fontWeight: 800 },
-  statusBarDivider: { color: 'rgba(255,255,255,0.25)', fontSize: '0.7rem' },
-  statusBarItem:    { color: 'rgba(255,255,255,0.75)' },
-
   applyPanel: {
     background: 'rgba(12,10,4,0.97)', border: '1px solid rgba(212,175,55,0.45)',
     borderRadius: '20px', padding: '28px 24px', width: '90%', maxWidth: '340px',

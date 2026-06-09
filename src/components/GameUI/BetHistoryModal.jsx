@@ -1,6 +1,6 @@
 import React from 'react';
 
-const ZONE_LABELS = ['天', '地', '玄', '黃'];
+const ZONE_LABELS = ['頭', '初', '川', '尾'];
 const ZONE_KEYS   = ['tian', 'di', 'xuan', 'huang'];
 
 const BetHistoryModal = ({ history, onClose }) => {

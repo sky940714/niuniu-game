@@ -14,6 +14,9 @@ class BetManager {
     // 🛑 驗證下注是否合法
     validateBet(player, zoneId, amount, gameState) {
         const zoneKeys = ['tian', 'di', 'xuan', 'huang'];
+        if (!Number.isInteger(zoneId) || zoneId < 0 || zoneId > 3) {
+            return { valid: false, msg: '無效的下注門' };
+        }
         const zoneName = zoneKeys[zoneId];
 
         // 1. 檢查遊戲階段

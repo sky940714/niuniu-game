@@ -203,16 +203,26 @@ export class SqueezeController {
   }
 
   close() {
-    gsap.to(this.container, { 
-      alpha: 0, 
-      duration: 0.3, 
+    gsap.to(this.container, {
+      alpha: 0,
+      duration: 0.3,
       onComplete: () => {
         this.container.visible = false;
-        // 關閉互動，防止透明層擋住遊戲
-        this.container.eventMode = 'none'; 
-        
+        this.container.eventMode = 'none';
         if (this.onCompleteCallback) this.onCompleteCallback();
       }
     });
+  }
+
+  // 強制重置（在 resetTable 時呼叫，中止任何進行中的咪牌狀態）
+  forceReset() {
+    gsap.killTweensOf(this.container);
+    if (this.cardBack)  { gsap.killTweensOf(this.cardBack);  }
+    if (this.cardFace)  { gsap.killTweensOf(this.cardFace);  }
+    this.container.visible   = false;
+    this.container.eventMode = 'none';
+    this.container.alpha     = 1; // 還原 alpha，避免下局進場動畫從 0 跑到 0
+    this.isSqueezing         = false;
+    this.onCompleteCallback  = null;
   }
 }

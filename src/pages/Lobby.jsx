@@ -382,9 +382,9 @@ const BLUR     = 'blur(18px)';
 
 const S = {
   root: {
-    width: '100vw', height: '100vh',
+    position: 'fixed', inset: 0,
     display: 'flex', flexDirection: 'column',
-    position: 'relative', overflow: 'hidden',
+    overflow: 'hidden',
     fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang TC", "Helvetica Neue", sans-serif',
   },
   bgImg: {
@@ -401,8 +401,12 @@ const S = {
   // Header
   header: {
     position: 'relative', zIndex: 10, flexShrink: 0,
-    height: '54px', display: 'flex', alignItems: 'center',
-    justifyContent: 'space-between', padding: '0 18px',
+    minHeight: '54px', display: 'flex', alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 'env(safe-area-inset-top)',
+    paddingBottom: '0',
+    paddingLeft: 'max(18px, calc(env(safe-area-inset-left) + 10px))',
+    paddingRight: 'max(18px, calc(env(safe-area-inset-right) + 10px))',
     background: 'rgba(6,8,20,0.75)',
     backdropFilter: BLUR, WebkitBackdropFilter: BLUR,
     borderBottom: '1px solid rgba(212,175,55,0.18)',
@@ -622,8 +626,13 @@ const S = {
 
   // Bottom Nav
   bottomNav: {
-    position: 'relative', zIndex: 10, flexShrink: 0, height: '50px',
-    display: 'flex', justifyContent: 'space-around',
+    position: 'relative', zIndex: 10, flexShrink: 0,
+    minHeight: 'calc(50px + env(safe-area-inset-bottom))',
+    paddingTop: '0',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+    paddingLeft: 'env(safe-area-inset-left)',
+    paddingRight: 'env(safe-area-inset-right)',
+    display: 'flex', justifyContent: 'space-around', alignItems: 'flex-start',
     background: 'rgba(4,6,16,0.88)',
     backdropFilter: BLUR, WebkitBackdropFilter: BLUR,
     borderTop: '1px solid rgba(255,255,255,0.07)',

@@ -123,6 +123,9 @@ class GameApp {
         // 否則下局 play() 會被自己的 guard 擋住且金幣粒子殘留在 stage
         if (this.coinRain) this.coinRain.stop();
 
+        // 強制中止進行中的咪牌（避免跨局殘留 overlay 或事件監聽）
+        if (this.squeezeCtrl) this.squeezeCtrl.forceReset();
+
         if (this.cardContainer) this.cardContainer.removeChildren();
         if (this.uiLayer) this.uiLayer.removeChildren();
 
