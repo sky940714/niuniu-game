@@ -144,4 +144,57 @@ ADMIN_SECRET=...     # Required for admin API access
 
 ## Backend URL
 
-Hardcoded to `http://localhost:3001` in `src/socket.js` and `admin/src/App.jsx`. Use `import.meta.env.VITE_API_URL` when deploying.
+`src/socket.js` and `admin/src/App.jsx` read from `import.meta.env.VITE_API_URL`. Set this in `.env.production` / `admin/.env.production` (both git-ignored — create manually on each machine).
+
+## Production Server
+
+**Vultr VPS**: `207.148.98.43` (Tokyo)
+
+### Server Directory Structure
+
+```
+/var/www/
+  game/       ← player frontend built files (dist/)
+  admin/      ← admin panel built files (admin/dist/)
+  backend/    ← Node.js backend source files
+  html/       ← nginx default
+```
+
+The server has **no git repo**. Deployment is done by building locally and uploading with SCP.
+
+### One-Click Deploy
+
+Run from project root (Windows PowerShell):
+
+```
+! .\deploy.ps1
+```
+
+The script does:
+1. `npm run build` — builds player frontend → `dist/`
+2. `cd admin && npm run build` — builds admin panel → `admin/dist/`
+3. `scp -r dist/. root@207.148.98.43:/var/www/game/`
+4. `scp -r admin/dist/. root@207.148.98.43:/var/www/admin/`
+5. `ssh` chmod 755 on both directories
+
+**Note**: Backend (`/var/www/backend/`) is NOT updated by this script. Backend changes require manual SCP of `backend/` files and `pm2 restart` on the server.
+
+### Environment Files (git-ignored, create manually)
+
+`.env.production` (root):
+```
+VITE_API_URL=http://207.148.98.43:3001
+```
+
+`admin/.env.production`:
+```
+VITE_API_URL=http://207.148.98.43:3001
+VITE_ADMIN_SECRET=<secret>
+```
+
+### Mobile UI Notes
+
+- Game room uses `position: fixed, inset: 0` to escape `#root` safe-area padding (PixiJS canvas alignment)
+- Lobby also uses `position: fixed, inset: 0`; safe-area applied per-element (header, bottomNav, main)
+- Bet zones named 頭/初/川/尾 (previously 天/地/玄/黃)
+- Chip animations pop in-place within zone using `getBoundingClientRect()`
