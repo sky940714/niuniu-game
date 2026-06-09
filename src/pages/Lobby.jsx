@@ -469,8 +469,10 @@ const S = {
   main: {
     flex: 1, position: 'relative', zIndex: 10,
     display: 'flex', flexDirection: 'column',
-    padding: '10px 18px 6px', gap: '10px',
-    overflow: 'hidden', minHeight: 0,
+    paddingTop: '10px', paddingBottom: '6px',
+    paddingLeft: 'max(18px, calc(env(safe-area-inset-left) + 10px))',
+    paddingRight: 'max(18px, calc(env(safe-area-inset-right) + 10px))',
+    gap: '10px', overflow: 'hidden', minHeight: 0,
   },
 
   // Promos
@@ -613,6 +615,8 @@ const S = {
   marqueeBar: {
     position: 'relative', zIndex: 10, flexShrink: 0, height: '27px',
     display: 'flex', alignItems: 'center',
+    paddingLeft: 'env(safe-area-inset-left)',
+    paddingRight: 'env(safe-area-inset-right)',
     background: 'rgba(6,8,20,0.82)', backdropFilter: 'blur(12px)',
     borderTop: '1px solid rgba(212,175,55,0.14)', overflow: 'hidden',
   },
