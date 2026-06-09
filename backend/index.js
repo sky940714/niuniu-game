@@ -9,9 +9,13 @@ require('dotenv').config();
 
 const GameTable = require('./managers/GameTable');
 const betManager = require('./managers/BetManager');
+const bankerManager = require('./managers/BankerManager');
 const UserService = require('./services/userService');
 const BetRecordService = require('./services/betRecordService');
+const JackpotService = require('./services/jackpotService');
+const BankerService = require('./services/bankerService');
 const botManager = require('./managers/BotManager');
+const { JACKPOT } = require('./config/gameRules');
 
 const app = express();
 app.use(express.json());
@@ -59,6 +63,7 @@ function clearLoginRateLimit(username) {
 // 🚀 初始化遊戲桌
 const gameTable = new GameTable(io);
 botManager.init(io, gameTable);
+bankerManager.init(io);
 
 // === 🛡️ Socket 驗證中間件 ===
 io.use(async (socket, next) => {
@@ -200,6 +205,8 @@ io.on('connection', (socket) => {
     // 4. 下注請求
     socket.on('place_bet', async (data) => {
         if (!socket.user) return socket.emit('error_msg', '請先登入');
+        if (bankerManager.getBankerUserId() === socket.user.db_id)
+            return socket.emit('error_msg', '做莊期間禁止下注');
 
         const { zoneId, amount } = data;
 
@@ -207,11 +214,19 @@ io.on('connection', (socket) => {
         if (!valid) return socket.emit('error_msg', msg);
 
         try {
-            const success = await UserService.updateBalance(socket.user.db_id, -amount);
+            // 彩金池貢獻（下注額 × 0.5%），與下注額一起從餘額扣除
+            const contribution = Math.ceil(amount * JACKPOT.CONTRIBUTION_RATE);
+            const totalDeduct  = amount + contribution;
+
+            const success = await UserService.updateBalance(socket.user.db_id, -totalDeduct);
             if (!success) throw new Error("扣款失敗");
 
-            socket.user.balance -= amount;
+            socket.user.balance -= totalDeduct;
             const { newTableBet } = betManager.placeBet(socket.user.db_id, zoneName, amount);
+
+            // 更新彩金池（記憶體即時 + DB 非同步）
+            gameTable.jackpotAmount += contribution;
+            JackpotService.contribute(contribution).catch(e => console.error('彩金池更新失敗:', e.message));
 
             socket.emit('update_balance', { balance: socket.user.balance });
 
@@ -228,15 +243,32 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 5. 玩家進入遊戲廳時主動要求當前局狀態（init_state 已在 lobby 階段發過，需要再發一次）
+    // 5. 玩家進入遊戲廳時主動要求當前局狀態
     socket.on('request_state', () => {
         if (!socket.user) return;
         socket.emit('init_state', {
-            phase: gameTable.phase,
-            countdown: gameTable.countdown,
-            tableBets: betManager.tableBets,
-            myBets: betManager.getPlayerBet(socket.user.db_id)
+            phase:        gameTable.phase,
+            countdown:    gameTable.countdown,
+            tableBets:    betManager.tableBets,
+            myBets:       betManager.getPlayerBet(socket.user.db_id),
+            jackpotAmount: Math.floor(gameTable.jackpotAmount),
+            bankerStatus:  bankerManager.getStatus(),
         });
+    });
+
+    // 6. 申請上莊
+    socket.on('apply_banker', async (data) => {
+        if (!socket.user) return socket.emit('error_msg', '請先登入');
+        const frozenAmount = Number(data?.frozenAmount) || 0;
+        const result = await bankerManager.apply(socket, frozenAmount);
+        socket.emit('apply_banker_result', result);
+    });
+
+    // 7. 取消排隊
+    socket.on('cancel_apply', async () => {
+        if (!socket.user) return socket.emit('error_msg', '請先登入');
+        const result = await bankerManager.cancelApply(socket);
+        socket.emit('cancel_apply_result', result);
     });
 
     socket.on('disconnect', () => {
@@ -417,6 +449,63 @@ app.post('/api/admin/announce', adminAuth, (req, res) => {
     res.json({ success: true });
 });
 
+// ── 禁止牌型設定 ──
+app.get('/api/admin/banned-types', adminAuth, (req, res) => {
+    res.json({ bannedTypes: [...gameTable.bannedHandTypes] });
+});
+
+app.post('/api/admin/set-banned-types', adminAuth, (req, res) => {
+    const { types } = req.body;
+    if (!Array.isArray(types)) return res.status(400).json({ error: 'types 必須是陣列' });
+    const validTypes = [
+        'FIVE_SMALL','BOMB','FULL_HOUSE','STRAIGHT_FLUSH','FIVE_KNIGHTS','SILVER_NIU',
+        'NIU_NIU','NIU_9','NIU_8','NIU_7','NIU_6','NIU_5','NIU_4','NIU_3','NIU_2','NIU_1','NO_NIU'
+    ];
+    const filtered = types.filter(t => validTypes.includes(t));
+    res.json(gameTable.setBannedTypes(filtered));
+});
+
+// ── 彩金池 ──
+app.get('/api/admin/jackpot/status', adminAuth, async (req, res) => {
+    try {
+        const pool = await JackpotService.getPool();
+        res.json({ ...pool, live_amount: Math.floor(gameTable.jackpotAmount) });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/jackpot/config', adminAuth, async (req, res) => {
+    try { res.json(await JackpotService.getAllConfig()); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/jackpot/config', adminAuth, async (req, res) => {
+    const { configs } = req.body;
+    if (!Array.isArray(configs)) return res.status(400).json({ error: 'configs 必須是陣列' });
+    try {
+        await JackpotService.setConfig(configs);
+        console.log(`👨‍💻 [Admin] 彩金設定已更新，${configs.filter(c=>c.is_enabled).length} 種觸發牌型`);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/jackpot/history', adminAuth, async (req, res) => {
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+    try { res.json(await JackpotService.getHistory(page, limit)); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/jackpot/adjust', adminAuth, async (req, res) => {
+    const { delta } = req.body;
+    if (delta === undefined || isNaN(Number(delta))) return res.status(400).json({ error: '缺少 delta 參數' });
+    try {
+        const updated = await JackpotService.adjust(Number(delta));
+        gameTable.jackpotAmount = parseFloat(updated.current_amount);
+        console.log(`👨‍💻 [Admin] 彩金池手動調整 ${delta > 0 ? '+' : ''}${delta}，目前：$${gameTable.jackpotAmount.toLocaleString()}`);
+        res.json({ success: true, newAmount: Math.floor(gameTable.jackpotAmount) });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── 歷史牌局 ──
 app.get('/api/admin/round-history', adminAuth, async (req, res) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
@@ -427,6 +516,27 @@ app.get('/api/admin/round-history', adminAuth, async (req, res) => {
         console.error('歷史記錄查詢失敗:', err);
         res.status(500).json({ error: '查詢失敗' });
     }
+});
+
+// ==========================================
+// 👑 莊家管理 API
+// ==========================================
+
+app.get('/api/admin/banker/status', adminAuth, (req, res) => {
+    res.json(bankerManager.getStatus());
+});
+
+app.post('/api/admin/banker/kick', adminAuth, async (req, res) => {
+    const result = await bankerManager.adminKick();
+    if (result.success) console.log('👨‍💻 [Admin] 強制踢除莊家');
+    res.json(result);
+});
+
+app.get('/api/admin/banker/history', adminAuth, async (req, res) => {
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+    try { res.json(await BankerService.getHistory(page, limit)); }
+    catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ==========================================

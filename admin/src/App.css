@@ -58,17 +58,35 @@ body {
 
 /* Phase badge */
 .status-badge {
-  padding: 5px 16px;
+  padding: 8px 22px;
   border-radius: 20px;
-  font-size: 0.8rem;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: 2px;
+  min-width: 90px;
+  text-align: center;
 }
-.status-badge.BETTING   { background: #fef3c7; color: #92400e; }
-.status-badge.DEALING   { background: #d1fae5; color: #065f46; }
-.status-badge.SQUEEZING { background: #dbeafe; color: #1e40af; }
-.status-badge.RESULT    { background: #fce7f3; color: #9d174d; }
+.status-badge.BETTING   { background: #fef3c7; color: #92400e; box-shadow: 0 0 8px rgba(251,191,36,0.4); }
+.status-badge.DEALING   { background: #d1fae5; color: #065f46; box-shadow: 0 0 8px rgba(16,185,129,0.4); }
+.status-badge.SQUEEZING { background: #dbeafe; color: #1e40af; box-shadow: 0 0 8px rgba(59,130,246,0.4); }
+.status-badge.RESULT    { background: #fce7f3; color: #9d174d; box-shadow: 0 0 8px rgba(236,72,153,0.4); }
+
+/* 倒數計時 */
+.countdown-badge {
+  font-size: 1.05rem; font-weight: 800; color: #f9fafb;
+  padding: 6px 14px; border: 2px solid #4b5563;
+  border-radius: 20px; letter-spacing: 1px;
+  min-width: 70px; text-align: center;
+}
+
+/* 即時時鐘 */
+.clock-badge {
+  font-size: 1rem; font-weight: 700; color: #d1d5db;
+  padding: 6px 14px; border: 1px solid #374151;
+  border-radius: 20px; letter-spacing: 1px;
+  background: rgba(255,255,255,0.05);
+  font-variant-numeric: tabular-nums;
+}
 
 /* 系統訊息 */
 .system-msg { color: #9ca3af; font-size: 0.8rem; }
@@ -89,12 +107,6 @@ body {
 /* Header controls */
 .header-controls {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-}
-
-.countdown-badge {
-  font-size: 0.82rem; font-weight: 700; color: #d1d5db;
-  padding: 5px 12px; border: 1px solid #374151;
-  border-radius: 20px; letter-spacing: 1px;
 }
 
 .ctrl-btn {
@@ -433,6 +445,82 @@ body {
 .announce-record:last-child { border-bottom: none; }
 .announce-time    { color: #9ca3af; font-size: 0.7rem; white-space: nowrap; flex-shrink: 0; margin-top: 2px; }
 .announce-content { color: #ea580c; font-size: 0.85rem; font-weight: 600; }
+
+/* ─── 勝率設定 Tab ───────────────────────────────────────────── */
+.banned-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.banned-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #374151;
+  transition: all 0.15s;
+  user-select: none;
+}
+.banned-item:hover { border-color: #f97316; background: #fff7ed; }
+.banned-item input[type="checkbox"] { width: 16px; height: 16px; accent-color: #ef4444; cursor: pointer; }
+.banned-item.banned-active {
+  border-color: #ef4444;
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.banned-info-box {
+  margin-top: 24px;
+  background: #f8fafc;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+.banned-info-title { font-weight: 800; font-size: 0.88rem; color: #374151; margin-bottom: 12px; }
+.banned-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 0.85rem;
+}
+.banned-info-row:last-of-type { border-bottom: none; }
+.banned-info-note { font-size: 0.72rem; color: #9ca3af; margin-top: 10px; }
+
+/* ─── 彩金池 Tab ─────────────────────────────────────────────── */
+.jackpot-status-grid {
+  display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 12px; margin-bottom: 24px;
+}
+.jackpot-stat-card {
+  background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+  padding: 16px 18px; text-align: center;
+}
+.jackpot-stat-card.jackpot-main {
+  background: linear-gradient(135deg, #1c1000, #2d1f00);
+  border-color: rgba(255,215,0,0.4);
+}
+.jackpot-stat-label { font-size: 0.75rem; color: #9ca3af; margin-bottom: 6px; }
+.jackpot-stat-value { font-size: 1.4rem; font-weight: 900; color: #e2e8f0; }
+.jackpot-stat-value.gold  { color: #FFD700; text-shadow: 0 0 10px rgba(255,215,0,0.4); }
+.jackpot-stat-value.red   { color: #ef4444; }
+
+.jackpot-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid #1e293b; }
+.jackpot-section-title { font-size: 1rem; font-weight: 700; color: #f1f5f9; margin-bottom: 12px; }
+
+.jackpot-config-row {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: #1e293b; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px;
+}
+.jackpot-config-row .form-input { margin-bottom: 0; }
 
 /* ─── Footer ─────────────────────────────────────────────────── */
 .admin-footer {

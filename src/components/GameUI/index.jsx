@@ -24,6 +24,8 @@ import btnSettingsImg from '../../assets/buttons/btn_settings.png';
 
 // B 模式風控參數 (需與後端 BetManager.js MAX_PAYOUT_ODDS 一致)
 const MAX_ODDS = 8;
+// 彩金池貢獻比例（需與後端 JACKPOT.CONTRIBUTION_RATE 一致）
+const JACKPOT_RATE = 0.005;
 
 const CHIPS = [
   { val: 100,   img: chip100Img   },
@@ -87,11 +89,13 @@ const smallBtnStyle = {
 
 // ─── GameUI ────────────────────────────────────────────────────
 const GameUI = () => {
-  const storeUser = useGameStore((state) => state.user);
+  const storeUser     = useGameStore((state) => state.user);
+  const setUserBalance = useGameStore((state) => state.setUserBalance);
   const [isLoggedIn, setIsLoggedIn] = useState(!!storeUser);
   const [username, setUsername] = useState(storeUser?.name || '');
   const [balance, setBalance] = useState(storeUser?.balance || 0);
   const [currentBets, setCurrentBets] = useState({ 0:0, 1:0, 2:0, 3:0 });
+  const [totalContributions, setTotalContributions] = useState(0);
 
   const [gameState, setGameState] = useState(PHASES.BETTING);
   const [countdown, setCountdown] = useState(0);
@@ -113,6 +117,18 @@ const GameUI = () => {
   // ── Sound ──
   const [soundEnabled, setSoundEnabled] = useState(soundManager.enabled);
 
+  // ── 彩金池 ──
+  const [jackpotAmount, setJackpotAmount] = useState(0);
+  const [jackpotWinData, setJackpotWinData] = useState(null);
+  const jackpotWinTimerRef = useRef(null);
+
+  // ── 莊家系統 ──
+  const [bankerStatus, setBankerStatus] = useState({ hasBanker: false, banker: null, queue: [], queueCount: 0, queueLimit: 5, minFrozen: 100000 });
+  const [showBankerModal, setShowBankerModal] = useState(false);
+  const [bankerFrozenInput, setBankerFrozenInput] = useState('');
+  const [bankerApplying, setBankerApplying] = useState(false);
+  const [bankerEndPopup, setBankerEndPopup] = useState(null); // { isForced, finalFrozen, netPnl, roundsPlayed }
+
   // ── 本局輸贏彈窗 ──
   const [roundResultPopup, setRoundResultPopup] = useState(null);
 
@@ -120,10 +136,11 @@ const GameUI = () => {
   const [betHistory, setBetHistory] = useState([]);
 
   // ── Refs：追蹤本局下注（不觸發 re-render） ──
-  const roundBetTotalRef = useRef(0);
-  const roundWinAmountRef = useRef(0);
-  const roundBetsRef = useRef({ tian: 0, di: 0, xuan: 0, huang: 0 });
-  const roundCountRef = useRef(0);
+  const roundBetTotalRef    = useRef(0);
+  const roundWinAmountRef   = useRef(0);
+  const roundNetChangeRef   = useRef(null); // 後端傳來的真實淨損益（含莊家倍率追賠）
+  const roundBetsRef        = useRef({ tian: 0, di: 0, xuan: 0, huang: 0 });
+  const roundCountRef       = useRef(0);
   const resultPopupTimerRef = useRef(null);
 
   const isBettingPhase = gameState === PHASES.BETTING;
@@ -133,7 +150,7 @@ const GameUI = () => {
   useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
 
   const totalCurrentBet = Object.values(currentBets).reduce((a, b) => a + b, 0);
-  const maxAffordableBet = Math.floor(balance / MAX_ODDS) - totalCurrentBet;
+  const maxAffordableBet = Math.floor((balance + totalCurrentBet) / MAX_ODDS) - totalCurrentBet;
 
   // ── 斷線重連 & 切換視窗 ─────────────────────────────────────
   useEffect(() => {
@@ -141,6 +158,7 @@ const GameUI = () => {
           setTableChips([]);
           setWinZones([]);
           setCurrentBets({ 0:0, 1:0, 2:0, 3:0 });
+          setTotalContributions(0);
           gameApp.resetTable();
       };
 
@@ -168,6 +186,8 @@ const GameUI = () => {
     const onTimeTick = (data) => {
         setCountdown(data.countdown);
         setGameState(data.phase);
+        if (data.jackpotAmount !== undefined) setJackpotAmount(data.jackpotAmount);
+        if (data.bankerStatus !== undefined) setBankerStatus(data.bankerStatus);
     };
 
     const onPhaseChange = (data) => {
@@ -184,11 +204,13 @@ const GameUI = () => {
             setShowMidRoundNotice(false);
             setWinZones([]);
             setCurrentBets({ 0:0, 1:0, 2:0, 3:0 });
+            setTotalContributions(0);
             setTableChips([]);
             gameApp.resetTable();
             // 重置本局追蹤
-            roundBetTotalRef.current = 0;
+            roundBetTotalRef.current  = 0;
             roundWinAmountRef.current = 0;
+            roundNetChangeRef.current = null;
             roundBetsRef.current = { tian: 0, di: 0, xuan: 0, huang: 0 };
             clearTimeout(resultPopupTimerRef.current);
             setRoundResultPopup(null);
@@ -207,8 +229,12 @@ const GameUI = () => {
             // 顯示本局輸贏彈窗（延遲 1.5s，讓發牌動畫先跑）
             if (roundBetTotalRef.current > 0) {
                 const betTotal   = roundBetTotalRef.current;
-                const winAmount  = roundWinAmountRef.current; // 若全輸則為 0
-                const net        = winAmount - betTotal;
+                const winAmount  = roundWinAmountRef.current;
+                // 優先使用後端傳來的真實淨損益（含莊家倍率追賠）
+                // fallback 為舊算法（不含追賠，僅本金）
+                const net = roundNetChangeRef.current !== null
+                    ? roundNetChangeRef.current
+                    : winAmount - betTotal;
 
                 // 儲存投注紀錄
                 roundCountRef.current += 1;
@@ -241,7 +267,9 @@ const GameUI = () => {
                 2: data.myBets.xuan  || 0,
                 3: data.myBets.huang || 0,
             });
+            setTotalContributions(0); // 重連時無法還原彩金貢獻，從 0 重算
         }
+        if (data.bankerStatus) setBankerStatus(data.bankerStatus);
         if (data.phase !== PHASES.BETTING) {
             const hasBets = data.myBets && Object.values(data.myBets).some(v => v > 0);
             if (!hasBets) setShowMidRoundNotice(true);
@@ -250,10 +278,10 @@ const GameUI = () => {
 
     const onUpdateBalance = (data) => {
         setBalance(data.balance);
-        // 捕捉本局贏回金額（settleBets 在 phase_change(RESULT) 之前發送）
-        if (data.winAmount) {
-            roundWinAmountRef.current = data.winAmount;
-        }
+        setUserBalance(data.balance); // 同步更新 Zustand store，確保返回大廳後餘額正確
+        // 捕捉本局結算數據（settleBets 在 phase_change(RESULT) 之前發送）
+        if (data.winAmount) roundWinAmountRef.current = data.winAmount;
+        if (data.netChange !== undefined) roundNetChangeRef.current = data.netChange;
     };
 
     const onErrorMsg = (msg) => { alert(msg); };
@@ -298,6 +326,32 @@ const GameUI = () => {
 
     const onBetLock = (data) => { setIsBetLocked(data.lock); };
 
+    const onJackpotWon = (data) => {
+        clearTimeout(jackpotWinTimerRef.current);
+        setJackpotWinData(data);
+        setJackpotAmount(0); // 視覺上立即歸零，等下一個 tick 更新種子金額
+        jackpotWinTimerRef.current = setTimeout(() => setJackpotWinData(null), 8000);
+    };
+
+    const onBankerStatus  = (data) => setBankerStatus(data);
+    const onBankerStarted = () => {}; // banker_status 廣播已更新狀態，iAmBanker 由 username 比對推導
+    const onBankerEnded   = (data) => {
+        setBankerEndPopup(data);
+        setTimeout(() => setBankerEndPopup(null), 10000);
+    };
+    const onApplyResult = (res) => {
+        setBankerApplying(false);
+        if (res.success) {
+            setShowBankerModal(false);
+            setBankerFrozenInput('');
+        } else {
+            alert(res.msg || '申請失敗');
+        }
+    };
+    const onCancelResult = (res) => {
+        if (!res.success) alert(res.msg || '取消失敗');
+    };
+
     socket.on('time_tick',        onTimeTick);
     socket.on('phase_change',     onPhaseChange);
     socket.on('init_state',       onInitState);
@@ -307,6 +361,12 @@ const GameUI = () => {
     socket.on('auth_success',     onAuthSuccess);
     socket.on('update_table_bets', onUpdateTableBets);
     socket.on('bet_lock',         onBetLock);
+    socket.on('jackpot_won',      onJackpotWon);
+    socket.on('banker_status',        onBankerStatus);
+    socket.on('banker_started',       onBankerStarted);
+    socket.on('banker_ended',         onBankerEnded);
+    socket.on('apply_banker_result',  onApplyResult);
+    socket.on('cancel_apply_result',  onCancelResult);
 
     if (socket.connected) socket.emit('request_state');
 
@@ -320,7 +380,14 @@ const GameUI = () => {
         socket.off('auth_success',     onAuthSuccess);
         socket.off('update_table_bets', onUpdateTableBets);
         socket.off('bet_lock',         onBetLock);
+        socket.off('jackpot_won',      onJackpotWon);
+        socket.off('banker_status',        onBankerStatus);
+        socket.off('banker_started',       onBankerStarted);
+        socket.off('banker_ended',         onBankerEnded);
+        socket.off('apply_banker_result',  onApplyResult);
+        socket.off('cancel_apply_result',  onCancelResult);
         clearTimeout(resultPopupTimerRef.current);
+        clearTimeout(jackpotWinTimerRef.current);
     };
   }, [username]);
 
@@ -329,9 +396,24 @@ const GameUI = () => {
     gameApp.onHistoryChange = (newHistory) => setHistory(newHistory);
   }, []);
 
+  // ── 莊家推導狀態 ─────────────────────────────────────────────
+  const iAmBanker  = !!(bankerStatus.banker && bankerStatus.banker.username === username);
+  const iAmInQueue = !!(bankerStatus.queue?.some(q => q.username === username));
+
+  const handleApplyBanker = () => {
+    const amount = parseInt(bankerFrozenInput.replace(/,/g, ''), 10);
+    if (isNaN(amount)) return alert('請輸入有效金額');
+    setBankerApplying(true);
+    socket.emit('apply_banker', { frozenAmount: amount });
+  };
+
+  const handleCancelApply = () => {
+    socket.emit('cancel_apply');
+  };
+
   // ── 下注 ─────────────────────────────────────────────────────
   const handleBetZone = (zoneId) => {
-    if (!isBettingPhase || !isLoggedIn || isBetLocked) return;
+    if (!isBettingPhase || !isLoggedIn || isBetLocked || iAmBanker) return;
     if (selectedChipVal > maxAffordableBet) {
         alert(`餘額不足以支付最高賠付 (需保留 ${MAX_ODDS} 倍本金)`);
         return;
@@ -345,6 +427,7 @@ const GameUI = () => {
     roundBetsRef.current[ZONE_KEYS[zoneId]] = (roundBetsRef.current[ZONE_KEYS[zoneId]] || 0) + selectedChipVal;
 
     setCurrentBets(prev => ({ ...prev, [zoneId]: prev[zoneId] + selectedChipVal }));
+    setTotalContributions(prev => prev + Math.ceil(selectedChipVal * JACKPOT_RATE));
 
     const targetPos  = getRandomPositionInZone(zoneId);
     const chipIndex  = CHIPS.findIndex(c => c.val === selectedChipVal);
@@ -393,6 +476,35 @@ const GameUI = () => {
   return (
     <>
       <AnnouncementToast />
+
+      {/* ── 彩金得獎全螢幕彈窗 ── */}
+      {jackpotWinData && (
+        <div style={jackpotStyles.overlay} onClick={() => setJackpotWinData(null)}>
+          <div style={jackpotStyles.panel} onClick={e => e.stopPropagation()}>
+            <div style={jackpotStyles.title}>🎊 彩金觸發！</div>
+            <div style={jackpotStyles.amount}>${jackpotWinData.jackpotPaid?.toLocaleString()}</div>
+            <div style={jackpotStyles.subtitle}>
+              {jackpotWinData.zones?.join('、')} 門開出 {jackpotWinData.handTypeName}
+            </div>
+            <div style={jackpotStyles.winnerList}>
+              {jackpotWinData.winners?.slice(0, 5).map((w, i) => (
+                <div key={i} style={jackpotStyles.winnerRow}>
+                  <span style={jackpotStyles.winnerName}>{w.username}</span>
+                  <span style={jackpotStyles.winnerZone}>{w.zone}門</span>
+                  <span style={jackpotStyles.winnerAmt}>+${w.jackpotWon?.toLocaleString()}</span>
+                </div>
+              ))}
+              {jackpotWinData.winners?.length > 5 && (
+                <div style={{ color: '#aaa', fontSize: '0.8rem', textAlign: 'center', marginTop: 4 }}>
+                  …等共 {jackpotWinData.winners.length} 人獲獎
+                </div>
+              )}
+            </div>
+            <div style={jackpotStyles.hint}>點擊任意處關閉</div>
+          </div>
+        </div>
+      )}
+
       <div style={styles.backgroundLayer} />
 
       <div style={styles.container}>
@@ -409,6 +521,11 @@ const GameUI = () => {
                 <div style={styles.dealerWrapper}>
                    <img src={frameDealerImg} alt="Dealer Frame" style={styles.dealerBg} />
                    <div style={styles.dealerText}>莊 Dealer</div>
+                </div>
+                {/* 彩金池顯示 */}
+                <div style={jackpotStyles.poolBar}>
+                    <div style={jackpotStyles.poolLabel}>🏆 彩金池</div>
+                    <div style={jackpotStyles.poolAmount}>${jackpotAmount.toLocaleString()}</div>
                 </div>
             </div>
         </div>
@@ -436,13 +553,13 @@ const GameUI = () => {
                           borderColor: isWinner ? '#ffd700' : (currentBets[zone.id] > 0 ? '#f1c40f' : 'rgba(255,255,255,0.1)'),
                           backgroundColor: isWinner ? 'rgba(255,215,0,0.4)' : 'rgba(0,0,0,0.05)',
                           boxShadow: isWinner ? '0 0 20px rgba(255,215,0,0.6), inset 0 0 20px rgba(255,215,0,0.3)' : 'none',
-                          pointerEvents: (isBettingPhase && !isBetLocked) ? 'auto' : 'none',
-                          opacity: (!isBettingPhase || isBetLocked) ? 0.6 : 1,
+                          pointerEvents: (isBettingPhase && !isBetLocked && !iAmBanker) ? 'auto' : 'none',
+                          opacity: (!isBettingPhase || isBetLocked || iAmBanker) ? 0.6 : 1,
                       }}
                       onClick={() => handleBetZone(zone.id)}
                     >
                         <div style={{...styles.zoneLabel, color: zone.color}}>{zone.label}</div>
-                        <div style={styles.zoneRate}>1 : 0.95</div>
+                        <div style={styles.zoneRate}>最高 7.6 : 1</div>
                         {currentBets[zone.id] > 0 && (
                             <div style={styles.zoneTotalBet}>${currentBets[zone.id]}</div>
                         )}
@@ -467,8 +584,13 @@ const GameUI = () => {
                   <div style={styles.balanceNum}>$ {balance.toLocaleString()}</div>
               </div>
               <div style={styles.betBox}>
-                  <div style={styles.balanceLabel}>🎯 總下注</div>
-                  <div style={styles.balanceNum}>$ {totalCurrentBet.toLocaleString()}</div>
+                  <div style={styles.balanceLabel}>🎯 總扣除</div>
+                  <div style={styles.balanceNum}>$ {(totalCurrentBet + totalContributions).toLocaleString()}</div>
+                  {totalContributions > 0 && (
+                      <div style={{ fontSize: '0.55rem', color: '#D4AF37', marginTop: '1px' }}>
+                          下注 ${totalCurrentBet.toLocaleString()} + 彩金 ${totalContributions.toLocaleString()}
+                      </div>
+                  )}
               </div>
             </div>
 
@@ -515,7 +637,38 @@ const GameUI = () => {
               <span style={{ fontSize: '0.6rem', color: '#D4AF37', fontWeight: 'bold', lineHeight: '1', display: 'block' }}>走勢</span>
           </div>
           <SmallBtn emoji="📜" label="紀錄" onClick={() => setShowBetHistory(true)} />
+          {iAmBanker ? (
+              <SmallBtn emoji="👑" label="做莊中" onClick={() => {}} />
+          ) : iAmInQueue ? (
+              <SmallBtn emoji="⏳" label="排隊中" onClick={handleCancelApply} />
+          ) : (
+              <SmallBtn emoji="🏦" label="申請上莊" onClick={() => setShowBankerModal(true)} />
+          )}
       </div>
+
+      {/* 莊家狀態欄（有真人莊家時顯示在畫面頂部） */}
+      {bankerStatus.hasBanker && bankerStatus.banker && (
+          <div style={bankerStyles.statusBar}>
+              <span style={bankerStyles.statusBarIcon}>👑</span>
+              <span style={bankerStyles.statusBarName}>{bankerStatus.banker.username}</span>
+              <span style={bankerStyles.statusBarDivider}>｜</span>
+              <span style={bankerStyles.statusBarItem}>每門上限 <b>${bankerStatus.banker.perZoneCap?.toLocaleString()}</b></span>
+              <span style={bankerStyles.statusBarDivider}>｜</span>
+              <span style={bankerStyles.statusBarItem}>剩 <b>{bankerStatus.banker.roundsLeft}</b> 局</span>
+              {iAmBanker && (
+                  <>
+                      <span style={bankerStyles.statusBarDivider}>｜</span>
+                      <span style={{
+                          ...bankerStyles.statusBarItem,
+                          color: bankerStatus.banker.netPnl >= 0 ? '#4caf50' : '#ef5350',
+                          fontWeight: 'bold',
+                      }}>
+                          {bankerStatus.banker.netPnl >= 0 ? '+' : ''}${bankerStatus.banker.netPnl?.toLocaleString()}
+                      </span>
+                  </>
+              )}
+          </div>
+      )}
 
       {/* ↓ 以下所有 overlay 必須在 container 外，否則被 zIndex:20 stacking context 鎖住 */}
 
@@ -576,6 +729,75 @@ const GameUI = () => {
                       color: roundResultPopup.net >= 0 ? '#4caf50' : '#ef5350',
                   }}>
                       {roundResultPopup.net >= 0 ? '+' : ''}{roundResultPopup.net.toLocaleString()}
+                  </div>
+                  <div style={styles.resultHint}>點擊關閉</div>
+              </div>
+          </div>
+      )}
+
+      {/* 申請上莊 Modal */}
+      {showBankerModal && (
+          <div style={styles.modalOverlay} onClick={() => { setShowBankerModal(false); setBankerFrozenInput(''); }}>
+              <div style={bankerStyles.applyPanel} onClick={e => e.stopPropagation()}>
+                  <div style={styles.modalTitle}>🏦 申請上莊</div>
+
+                  <div style={bankerStyles.applyInfoBox}>
+                      <div style={bankerStyles.applyInfoRow}>最低凍結金<span>${bankerStatus.minFrozen?.toLocaleString()}</span></div>
+                      <div style={bankerStyles.applyInfoRow}>排隊人數<span>{bankerStatus.queueCount} / {bankerStatus.queueLimit}</span></div>
+                      {bankerStatus.hasBanker && bankerStatus.banker && (
+                          <div style={bankerStyles.applyInfoRow}>目前莊家<span>{bankerStatus.banker.username}（剩 {bankerStatus.banker.roundsLeft} 局）</span></div>
+                      )}
+                  </div>
+
+                  <div style={bankerStyles.applyLabel}>凍結金額（從餘額扣除，下莊後歸還）</div>
+                  <input
+                      type="number"
+                      value={bankerFrozenInput}
+                      onChange={e => setBankerFrozenInput(e.target.value)}
+                      placeholder={`最低 $${bankerStatus.minFrozen?.toLocaleString()}`}
+                      style={bankerStyles.applyInput}
+                  />
+                  {bankerFrozenInput && !isNaN(parseInt(bankerFrozenInput)) && parseInt(bankerFrozenInput) >= (bankerStatus.minFrozen || 0) && (
+                      <div style={bankerStyles.applyPreview}>
+                          預計每門上限：<b>${Math.floor(parseInt(bankerFrozenInput) / 34.4).toLocaleString()}</b>
+                      </div>
+                  )}
+
+                  <button
+                      style={{ ...styles.modalBtnLobby, marginTop: '12px', opacity: bankerApplying ? 0.6 : 1 }}
+                      onClick={handleApplyBanker}
+                      disabled={bankerApplying}
+                  >
+                      {bankerApplying ? '處理中…' : '確認申請'}
+                  </button>
+                  <button style={styles.modalBtnCancel} onClick={() => { setShowBankerModal(false); setBankerFrozenInput(''); }}>取消</button>
+              </div>
+          </div>
+      )}
+
+      {/* 莊家下莊結算彈窗 */}
+      {bankerEndPopup && (
+          <div style={styles.resultPopupWrap} onClick={() => setBankerEndPopup(null)}>
+              <div style={{ ...styles.resultPopupCard, minWidth: '220px' }}>
+                  <div style={styles.resultPopupTitle}>
+                      {bankerEndPopup.isForced ? '⚠️ 強制下莊' : '✅ 任期結束'}
+                  </div>
+                  <div style={styles.resultRows}>
+                      <div style={styles.resultRow}>
+                          <span>做莊局數</span>
+                          <span>{bankerEndPopup.roundsPlayed} 局</span>
+                      </div>
+                      <div style={styles.resultRow}>
+                          <span>退還凍結金</span>
+                          <span>${bankerEndPopup.finalFrozen?.toLocaleString()}</span>
+                      </div>
+                      <div style={styles.resultDivider} />
+                  </div>
+                  <div style={{
+                      ...styles.resultNet,
+                      color: bankerEndPopup.netPnl >= 0 ? '#4caf50' : '#ef5350',
+                  }}>
+                      {bankerEndPopup.netPnl >= 0 ? '+' : ''}{bankerEndPopup.netPnl?.toLocaleString()}
                   </div>
                   <div style={styles.resultHint}>點擊關閉</div>
               </div>
@@ -881,6 +1103,86 @@ const styles = {
   midRoundMsg:  { color: 'rgba(255,255,255,0.85)', fontSize: '0.95rem', fontWeight: '500' },
   midRoundSub:  { color: 'rgba(255,255,255,0.4)', fontSize: '0.78rem', letterSpacing: '0.05em' },
   midRoundDots: { display: 'flex', gap: '8px', justifyContent: 'center', color: '#D4AF37', fontSize: '0.9rem', marginTop: '4px' },
+};
+
+// ─── 彩金池樣式 ───────────────────────────────────────────────
+const jackpotStyles = {
+  poolBar: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    background: 'linear-gradient(135deg, rgba(180,120,0,0.35), rgba(255,215,0,0.15))',
+    border: '1px solid rgba(255,215,0,0.5)', borderRadius: '10px',
+    padding: '4px 14px', minWidth: '110px',
+  },
+  poolLabel: { fontSize: '0.6rem', color: '#D4AF37', letterSpacing: '0.08em', fontWeight: 700 },
+  poolAmount: { fontSize: '1rem', color: '#FFD700', fontWeight: 900, letterSpacing: '0.02em' },
+
+  overlay: {
+    position: 'fixed', inset: 0, zIndex: 99999,
+    background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(8px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  },
+  panel: {
+    background: 'linear-gradient(160deg, #1a1200, #2d1f00)',
+    border: '2px solid #FFD700', borderRadius: '24px',
+    padding: '36px 40px', maxWidth: '420px', width: '90%',
+    boxShadow: '0 0 60px rgba(255,215,0,0.4), 0 0 120px rgba(255,165,0,0.2)',
+    textAlign: 'center',
+  },
+  title:   { fontSize: '1.6rem', fontWeight: 900, color: '#FFD700', marginBottom: 8 },
+  amount:  { fontSize: '2.8rem', fontWeight: 900, color: '#FFD700', margin: '8px 0',
+             textShadow: '0 0 20px rgba(255,215,0,0.8)' },
+  subtitle:{ fontSize: '1rem', color: '#FFA500', marginBottom: 20, fontWeight: 600 },
+  winnerList: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 },
+  winnerRow:  { display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                background: 'rgba(255,215,0,0.08)', borderRadius: 8, padding: '6px 14px' },
+  winnerName: { color: '#fff', fontWeight: 700, fontSize: '0.9rem' },
+  winnerZone: { color: '#aaa', fontSize: '0.8rem' },
+  winnerAmt:  { color: '#4caf50', fontWeight: 800, fontSize: '0.95rem' },
+  hint:       { color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem' },
+};
+
+// ─── 莊家系統樣式 ─────────────────────────────────────────────
+const bankerStyles = {
+  statusBar: {
+    position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)',
+    zIndex: 9998, display: 'flex', alignItems: 'center', gap: '6px',
+    background: 'linear-gradient(90deg, rgba(20,14,0,0.92), rgba(50,35,0,0.92))',
+    border: '1px solid rgba(212,175,55,0.5)',
+    borderTop: 'none', borderRadius: '0 0 14px 14px',
+    padding: '4px 18px', fontSize: '0.78rem', color: 'rgba(255,255,255,0.85)',
+    pointerEvents: 'none', whiteSpace: 'nowrap',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+  },
+  statusBarIcon:    { fontSize: '1rem' },
+  statusBarName:    { color: '#FFD700', fontWeight: 800 },
+  statusBarDivider: { color: 'rgba(255,255,255,0.25)', fontSize: '0.7rem' },
+  statusBarItem:    { color: 'rgba(255,255,255,0.75)' },
+
+  applyPanel: {
+    background: 'rgba(12,10,4,0.97)', border: '1px solid rgba(212,175,55,0.45)',
+    borderRadius: '20px', padding: '28px 24px', width: '90%', maxWidth: '340px',
+    display: 'flex', flexDirection: 'column', gap: '8px',
+    boxShadow: '0 0 40px rgba(0,0,0,0.8)',
+  },
+  applyInfoBox: {
+    background: 'rgba(255,255,255,0.04)', borderRadius: '10px',
+    padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px',
+  },
+  applyInfoRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    fontSize: '0.82rem', color: 'rgba(255,255,255,0.65)',
+  },
+  applyLabel: { fontSize: '0.8rem', color: 'rgba(255,255,255,0.5)', marginTop: '4px' },
+  applyInput: {
+    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(212,175,55,0.3)',
+    borderRadius: '10px', padding: '10px 14px', color: '#fff',
+    fontSize: '1rem', fontFamily: 'inherit', outline: 'none', width: '100%',
+    boxSizing: 'border-box',
+  },
+  applyPreview: {
+    fontSize: '0.82rem', color: '#D4AF37', textAlign: 'center',
+    background: 'rgba(212,175,55,0.1)', borderRadius: '8px', padding: '6px',
+  },
 };
 
 export default GameUI;

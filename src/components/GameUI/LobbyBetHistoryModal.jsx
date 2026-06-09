@@ -54,9 +54,9 @@ const RecordRow = ({ r }) => {
                     <div style={s.detailRow}>
                         <span style={s.detailLabel}>下注</span>
                         <span style={s.detailVal}>${r.bet_total.toLocaleString()}</span>
-                        <span style={s.detailLabel}>獲得</span>
+                        <span style={s.detailLabel}>{net >= 0 ? '獲利' : '賠付'}</span>
                         <span style={{ ...s.detailVal, color: net >= 0 ? '#4caf50' : '#ef5350' }}>
-                            ${r.win_amount.toLocaleString()}
+                            ${Math.abs(net).toLocaleString()}
                         </span>
                     </div>
                     {/* 莊家 */}

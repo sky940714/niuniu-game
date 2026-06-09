@@ -56,7 +56,7 @@ const BetHistoryModal = ({ history, onClose }) => {
                                     <span style={s.detailItem}>下注 ${entry.betTotal.toLocaleString()}</span>
                                     <span style={s.arrow}>→</span>
                                     <span style={{ ...s.detailItem, color: entry.net >= 0 ? '#4caf50' : '#ef5350' }}>
-                                        獲得 ${entry.winAmount.toLocaleString()}
+                                        {entry.net >= 0 ? '獲利' : '賠付'} ${Math.abs(entry.net).toLocaleString()}
                                     </span>
                                 </div>
                             </div>

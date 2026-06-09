@@ -357,4 +357,77 @@ function generateRandomHand(excludedCards = []) {
     return pool.length >= 5 ? pool.slice(0, 5) : null;
 }
 
-module.exports = { createDeck, calculateHand, isPlayerWin, generateHandOfType, generateRandomHand };
+// ── 精確勝率控制輔助 ──────────────────────────────────────────────
+
+// 牌型強度表（tier 越大越強）
+const HAND_TIERS = [
+    { type: 'FIVE_SMALL',     tier: 90 },
+    { type: 'BOMB',           tier: 80 },
+    { type: 'FULL_HOUSE',     tier: 70 },
+    { type: 'STRAIGHT_FLUSH', tier: 65 },
+    { type: 'FIVE_KNIGHTS',   tier: 60 },
+    { type: 'SILVER_NIU',     tier: 55 },
+    { type: 'NIU_NIU',        tier: 10 },
+    { type: 'NIU_9',          tier: 9  },
+    { type: 'NIU_8',          tier: 8  },
+    { type: 'NIU_7',          tier: 7  },
+    { type: 'NIU_6',          tier: 6  },
+    { type: 'NIU_5',          tier: 5  },
+    { type: 'NIU_4',          tier: 4  },
+    { type: 'NIU_3',          tier: 3  },
+    { type: 'NIU_2',          tier: 2  },
+    { type: 'NIU_1',          tier: 1  },
+    { type: 'NO_NIU',         tier: 0  },
+];
+
+// 從 calculateHand 的結果取得 tier 值
+function getResultTier(result) {
+    if (result.type === 'FIVE_SMALL')     return 90;
+    if (result.type === 'BOMB')           return 80;
+    if (result.type === 'FULL_HOUSE')     return 70;
+    if (result.type === 'STRAIGHT_FLUSH') return 65;
+    if (result.type === 'FIVE_KNIGHTS')   return 60;
+    if (result.type === 'SILVER_NIU')     return 55;
+    if (result.type === 'NIU_NIU')        return 10;
+    if (result.type === 'BIG_NIU' || result.type === 'SMALL_NIU') return result.niu;
+    return 0;
+}
+
+// 生成「比 bankerResult 弱」的手牌（讓莊家贏）
+function generateWeakerHand(bankerResult, excludedCards, bannedTypes = new Set()) {
+    const bankerTier = getResultTier(bankerResult);
+    const candidates = _shuffleArr(
+        HAND_TIERS.filter(h => h.tier < bankerTier && !bannedTypes.has(h.type))
+    );
+    for (const { type } of candidates) {
+        const hand = generateHandOfType(type, excludedCards);
+        if (hand) return hand;
+    }
+    return null;
+}
+
+// 生成「比 bankerResult 強」的手牌（讓玩家贏）
+function generateStrongerHand(bankerResult, excludedCards, bannedTypes = new Set()) {
+    const bankerTier = getResultTier(bankerResult);
+    const candidates = _shuffleArr(
+        HAND_TIERS.filter(h => h.tier > bankerTier && !bannedTypes.has(h.type))
+    );
+    for (const { type } of candidates) {
+        const hand = generateHandOfType(type, excludedCards);
+        if (hand) return hand;
+    }
+    return null;
+}
+
+// 將 calculateHand 結果轉為禁牌 key（如 BIG_NIU niu=9 → 'NIU_9'）
+function getHandTypeKey(result) {
+    if (result.type === 'BIG_NIU' || result.type === 'SMALL_NIU') return `NIU_${result.niu}`;
+    return result.type;
+}
+
+module.exports = {
+    createDeck, calculateHand, isPlayerWin,
+    generateHandOfType, generateRandomHand,
+    generateWeakerHand, generateStrongerHand,
+    getResultTier, getHandTypeKey, HAND_TIERS,
+};

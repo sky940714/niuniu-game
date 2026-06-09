@@ -7,8 +7,8 @@ const MAX_PAYOUT_ODDS = 8;
 class BetManager {
     constructor() {
         this.tableBets = { tian: 0, di: 0, xuan: 0, huang: 0 };
-        // key 改為 db_id，避免斷線重連後下注紀錄遺失
         this.playerBets = {};
+        this.bankerPerZoneCap = null; // 真人莊家時的每門桌面上限（null = 使用預設）
     }
 
     // 🛑 驗證下注是否合法
@@ -39,12 +39,14 @@ class BetManager {
         const currentPlayerBets = this.playerBets[playerId];
         const currentTotal = Object.values(currentPlayerBets).reduce((a, b) => a + b, 0);
 
-        // 5. B 模式餘額風控：含五小妞最高 8 倍
-        const potentialLiability = (currentTotal + amount) * MAX_PAYOUT_ODDS;
-        if (potentialLiability > player.balance) {
+        // 5. 餘額風控：若輸掉，最壞情況按莊家 8 倍賠付
+        // 玩家下注後已扣本金，追加賠付最多為 totalBet × (8-1) = totalBet × 7
+        const newTotal = currentTotal + amount;
+        const maxExtraLoss = newTotal * (MAX_PAYOUT_ODDS - 1); // 超出本金的最大賠付
+        if (maxExtraLoss > player.balance - amount) {
             return {
                 valid: false,
-                msg: `餘額不足以支付最高賠付 (需保留 ${MAX_PAYOUT_ODDS} 倍本金)`
+                msg: `餘額不足以支付最高賠付 (莊家最高 ${MAX_PAYOUT_ODDS} 倍，需保留足夠餘額)`
             };
         }
 
@@ -61,6 +63,13 @@ class BetManager {
         // 8. 單局總上限
         if (currentTotal + amount > BET_LIMITS.MAX_TOTAL_BET) {
             return { valid: false, msg: `單局總上限 $${BET_LIMITS.MAX_TOTAL_BET}` };
+        }
+
+        // 9. 真人莊家：每門桌面總上限（所有玩家合計）
+        if (this.bankerPerZoneCap !== null) {
+            if (this.tableBets[zoneName] + amount > this.bankerPerZoneCap) {
+                return { valid: false, msg: `莊家承擔上限：每門最多 $${this.bankerPerZoneCap.toLocaleString()}` };
+            }
         }
 
         return { valid: true, zoneName };
@@ -80,7 +89,7 @@ class BetManager {
         };
     }
 
-    // 🔄 重置新局
+    // 🔄 重置新局（保留 bankerPerZoneCap，由 GameTable 在局開始時設定）
     reset() {
         this.tableBets = { tian: 0, di: 0, xuan: 0, huang: 0 };
         this.playerBets = {};
