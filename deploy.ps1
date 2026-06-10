@@ -16,7 +16,13 @@ scp -r dist/. "${SERVER}:/var/www/game/"
 Write-Host "`n[4/5] Uploading admin panel..." -ForegroundColor Cyan
 scp -r admin/dist/. "${SERVER}:/var/www/admin/"
 
-Write-Host "`n[5/5] Setting permissions..." -ForegroundColor Cyan
-ssh $SERVER "chmod -R 755 /var/www/game && chmod -R 755 /var/www/admin"
+Write-Host "`n[5/5] Uploading backend + restarting..." -ForegroundColor Cyan
+scp backend/index.js "${SERVER}:/var/www/backend/"
+scp backend/logic.js "${SERVER}:/var/www/backend/"
+scp -r backend/managers/. "${SERVER}:/var/www/backend/managers/"
+scp -r backend/services/. "${SERVER}:/var/www/backend/services/"
+scp -r backend/config/. "${SERVER}:/var/www/backend/config/"
+scp -r backend/utils/. "${SERVER}:/var/www/backend/utils/"
+ssh $SERVER "chmod -R 755 /var/www/game && chmod -R 755 /var/www/admin && pm2 restart all"
 
 Write-Host "`nDeploy complete!" -ForegroundColor Green
