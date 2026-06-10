@@ -12,6 +12,7 @@ const betManager = require('./managers/BetManager');
 const bankerManager = require('./managers/BankerManager');
 const UserService = require('./services/userService');
 const BetRecordService = require('./services/betRecordService');
+const GameRoundService = require('./services/gameRoundService');
 const JackpotService = require('./services/jackpotService');
 const BankerService = require('./services/bankerService');
 const botManager = require('./managers/BotManager');
@@ -522,7 +523,7 @@ app.post('/api/admin/jackpot/adjust', adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── 歷史牌局 ──
+// ── 歷史牌局（舊，保留相容） ──
 app.get('/api/admin/round-history', adminAuth, async (req, res) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     try {
@@ -532,6 +533,20 @@ app.get('/api/admin/round-history', adminAuth, async (req, res) => {
         console.error('歷史記錄查詢失敗:', err);
         res.status(500).json({ error: '查詢失敗' });
     }
+});
+
+// ── 牌局紀錄（完整版）──
+app.get('/api/admin/game-rounds', adminAuth, async (req, res) => {
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 30));
+    try { res.json(await GameRoundService.getHistory(page, limit)); }
+    catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/admin/game-rounds/stats', adminAuth, async (req, res) => {
+    const n = Math.min(10000, Math.max(10, parseInt(req.query.n) || 100));
+    try { res.json(await GameRoundService.getStats(n)); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ==========================================

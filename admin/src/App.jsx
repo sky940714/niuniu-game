@@ -149,6 +149,7 @@ const TABS = [
   { id:'players',  label:'👥 在線玩家' },
   { id:'balance',  label:'💰 餘額管理' },
   { id:'history',  label:'📋 歷史記錄' },
+  { id:'rounds',   label:'📊 牌局紀錄' },
   { id:'announce', label:'📢 公告推播' },
   { id:'settings', label:'⚙️ 勝率設定' },
   { id:'jackpot',  label:'🏆 彩金池' },
@@ -194,6 +195,13 @@ function App() {
   const [jackpotHistTotal,  setJackpotHistTotal]   = useState(0);
   const [jackpotAdjDelta,   setJackpotAdjDelta]    = useState('');
   const [savingJackpot,     setSavingJackpot]      = useState(false);
+  // rounds tab
+  const [rounds,          setRounds]          = useState([]);
+  const [roundsTotal,     setRoundsTotal]     = useState(0);
+  const [roundsPage,      setRoundsPage]      = useState(1);
+  const [roundsStats,     setRoundsStats]     = useState(null);
+  const [loadingRounds,   setLoadingRounds]   = useState(false);
+  const [statsN,          setStatsN]          = useState(100);
 
   const fetchStatus = useCallback(async () => {
     try { const r = await axios.get(`${API_URL}/preview`, H); setGameState(r.data); }
@@ -248,6 +256,21 @@ function App() {
     try { const r = await axios.get(`${API_URL}/round-history?limit=30`, H); setHistory(r.data); }
     catch {} finally { setLoadingHistory(false); }
   };
+
+  const fetchRounds = useCallback(async (page = roundsPage) => {
+    setLoadingRounds(true);
+    try {
+      const [r, s] = await Promise.all([
+        axios.get(`${API_URL}/game-rounds?page=${page}&limit=30`, H),
+        axios.get(`${API_URL}/game-rounds/stats?n=${statsN}`, H),
+      ]);
+      setRounds(r.data.rows || []);
+      setRoundsTotal(r.data.total || 0);
+      setRoundsStats(s.data);
+    } catch {} finally { setLoadingRounds(false); }
+  }, [roundsPage, statsN]);
+
+  useEffect(() => { if (activeTab === 'rounds') fetchRounds(roundsPage); }, [activeTab, roundsPage, statsN]);
 
   const isBettingPhase = gameState?.status === 'BETTING';
 
@@ -617,7 +640,113 @@ function App() {
           </div>
         )}
 
-        {/* ── Tab 5: 公告推播 ── */}
+        {/* ── Tab 5: 牌局紀錄 ── */}
+        {activeTab==='rounds' && (
+          <div className="form-panel">
+            <h2 className="panel-title">牌局紀錄</h2>
+
+            {/* 統計區 */}
+            <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:14, flexWrap:'wrap' }}>
+              <span style={{color:'#9ca3af',fontSize:'0.85rem'}}>統計近</span>
+              {[50,100,500,1000].map(n => (
+                <button key={n}
+                  onClick={() => setStatsN(n)}
+                  style={{
+                    padding:'4px 12px', borderRadius:8, border:'none', cursor:'pointer', fontSize:'0.82rem',
+                    background: statsN===n ? '#2563eb' : 'rgba(255,255,255,0.08)',
+                    color: statsN===n ? '#fff' : '#9ca3af',
+                  }}>{n} 局</button>
+              ))}
+              <button onClick={() => fetchRounds(roundsPage)} style={{ padding:'4px 12px', borderRadius:8, border:'none', cursor:'pointer', background:'rgba(255,255,255,0.08)', color:'#9ca3af', fontSize:'0.82rem' }}>🔄 刷新</button>
+            </div>
+
+            {roundsStats && (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:10, marginBottom:20 }}>
+                {[
+                  { label:'統計局數',   val: fmt(roundsStats.total_rounds),          color:'#fff' },
+                  { label:'目標勝率',   val: `${roundsStats.target_win_rate_pct}%`,   color:'#facc15' },
+                  { label:'實際勝率',   val: `${roundsStats.actual_win_rate_pct}%`,   color: Math.abs(roundsStats.actual_win_rate_pct - roundsStats.target_win_rate_pct) <= 3 ? '#4ade80' : '#f87171' },
+                  { label:'莊家獲利',   val: `$${fmt(roundsStats.house_profit)}`,     color: roundsStats.house_profit >= 0 ? '#4ade80' : '#f87171' },
+                  { label:'總下注額',   val: `$${fmt(roundsStats.total_bet)}`,         color:'#60a5fa' },
+                  { label:'換牌次數',   val: fmt(roundsStats.swap_count),             color:'#fb923c' },
+                  { label:'指定牌型',   val: fmt(roundsStats.force_count),            color:'#fb923c' },
+                  { label:'放水失敗',   val: fmt(roundsStats.total_failed_releases),  color: roundsStats.total_failed_releases > 0 ? '#f87171' : '#6b7280' },
+                ].map(({ label, val, color }) => (
+                  <div key={label} style={{ background:'rgba(255,255,255,0.05)', borderRadius:10, padding:'10px 14px', border:'1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ color:'#6b7280', fontSize:'0.72rem', marginBottom:4 }}>{label}</div>
+                    <div style={{ color, fontWeight:700, fontSize:'1.05rem' }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 牌局列表 */}
+            {loadingRounds ? (
+              <div style={{ textAlign:'center', color:'#6b7280', padding:30 }}>載入中…</div>
+            ) : (
+              <div style={{ overflowX:'auto' }}>
+                <table className="history-table" style={{ fontSize:'0.78rem' }}>
+                  <thead>
+                    <tr>
+                      <th>時間</th>
+                      <th>莊家牌型</th>
+                      <th style={{color:'#60a5fa'}}>頭</th>
+                      <th style={{color:'#facc15'}}>初</th>
+                      <th style={{color:'#4ade80'}}>川</th>
+                      <th style={{color:'#f87171'}}>尾</th>
+                      <th>莊贏門數</th>
+                      <th>目標勝率</th>
+                      <th>下注額</th>
+                      <th>莊家獲利</th>
+                      <th>備註</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rounds.map((r, i) => {
+                      const dt = new Date(r.settled_at);
+                      const timeStr = `${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+                      const flags = [r.had_swap && '換牌', r.had_force && '指定', r.failed_releases > 0 && `失敗${r.failed_releases}門`].filter(Boolean);
+                      return (
+                        <tr key={i}>
+                          <td style={{color:'#6b7280'}}>{timeStr}</td>
+                          <td style={{fontWeight:700}}>{r.banker_type}</td>
+                          {['tian','di','xuan','huang'].map(z => (
+                            <td key={z} style={{ color: r[`${z}_win`] ? '#f87171' : '#4ade80', fontWeight:600 }}>
+                              {r[`${z}_type`]}<br/>
+                              <span style={{fontSize:'0.68rem'}}>{r[`${z}_win`] ? '玩家贏' : '莊贏'}</span>
+                            </td>
+                          ))}
+                          <td style={{ color: r.banker_win_count >= 3 ? '#4ade80' : r.banker_win_count <= 1 ? '#f87171' : '#facc15', fontWeight:700, textAlign:'center' }}>
+                            {r.banker_win_count}/4
+                          </td>
+                          <td style={{color:'#9ca3af'}}>{(parseFloat(r.target_win_rate)*100).toFixed(0)}%</td>
+                          <td style={{color:'#60a5fa'}}>${fmt(r.total_bet)}</td>
+                          <td style={{color: r.house_profit>=0?'#4ade80':'#f87171', fontWeight:700}}>
+                            {r.house_profit>=0?'+':''}{fmt(r.house_profit)}
+                          </td>
+                          <td style={{color:'#fb923c', fontSize:'0.7rem'}}>
+                            {flags.join(' ')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* 分頁 */}
+            {Math.ceil(roundsTotal/30) > 1 && (
+              <div style={{ display:'flex', gap:10, justifyContent:'center', marginTop:14, alignItems:'center' }}>
+                <button className="kick-btn" disabled={roundsPage<=1} onClick={() => setRoundsPage(p=>p-1)}>‹ 上一頁</button>
+                <span style={{color:'#6b7280', fontSize:'0.82rem'}}>{roundsPage} / {Math.ceil(roundsTotal/30)}</span>
+                <button className="kick-btn" disabled={roundsPage>=Math.ceil(roundsTotal/30)} onClick={() => setRoundsPage(p=>p+1)}>下一頁 ›</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tab 6: 公告推播 ── */}
         {activeTab==='announce' && (
           <div className="form-panel">
             <h2 className="panel-title">系統公告推播</h2>

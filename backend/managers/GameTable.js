@@ -5,6 +5,7 @@ const betManager = require('./BetManager');
 const bankerManager = require('./BankerManager');
 const UserService = require('../services/userService');
 const BetRecordService = require('../services/betRecordService');
+const GameRoundService = require('../services/gameRoundService');
 const JackpotService = require('../services/jackpotService');
 const botManager = require('./BotManager');
 
@@ -54,9 +55,16 @@ class GameTable {
         this.bannedHandTypes = new Set(); // 禁止出現的牌型
         this.jackpotAmount = JACKPOT.SEED_AMOUNT; // 彩金池（記憶體，啟動時從 DB 同步）
 
+        // 牌局追蹤旗標（每局 resetGame 重置）
+        this.hadSwap           = false;
+        this.hadForce          = false;
+        this.lastFailedReleases = 0;
+        this.lastWinRate       = 0;
+
         // 啟動心跳循環
         this.startGameLoop();
         this._loadJackpot();
+        GameRoundService.ensureTable().catch(e => console.error('game_rounds 建表失敗:', e.message));
 
         // 伺服器剛啟動的第一局，先發牌並讓機器人進場
         this.generateResult(); 
@@ -181,6 +189,7 @@ class GameTable {
             const isPeak  = this._isPeakHour();
             const winRate = isPeak ? 0.69 : 0.60;
             const timeTag = isPeak ? '🔴熱門' : '🟢離峰';
+            this.lastWinRate = winRate;
 
             const excludedCards = [];
             const hands   = {};
@@ -252,6 +261,7 @@ class GameTable {
 
             const bankerWinCount = Object.values(winners).filter(w => !w).length;
             const failNote = failedReleases > 0 ? ` ⚠️ ${failedReleases}門因禁牌無法放水` : '';
+            this.lastFailedReleases = failedReleases;
             console.log(`🎯 [RNG] ${timeTag} | 目標勝率:${(winRate*100).toFixed(0)}% | 莊家牌型:${results.banker.typeName} | 莊贏${bankerWinCount}/4門${failNote}`);
 
         } catch (error) {
@@ -290,6 +300,7 @@ class GameTable {
             winners[z] = gameLogic.isPlayerWin(results[z], results.banker);
         });
 
+        this.hadForce = true;
         console.log(`👨‍💻 [Admin] 指定牌型：[${zone}] → ${results[zone].typeName}`);
         return { success: true };
     }
@@ -319,6 +330,7 @@ class GameTable {
             winners[zone] = gameLogic.isPlayerWin(results[zone], results.banker);
         });
 
+        this.hadSwap = true;
         console.log(`👨‍💻 [Admin] 上帝換牌執行：[${targetA}] <==> [${targetB}]`);
         return true;
     }
@@ -430,6 +442,34 @@ class GameTable {
 
         // ── 彩金池觸發結算 ──
         await this._settleJackpot(sockets);
+
+        // ── 寫入牌局紀錄 ──
+        const totalBetAllPlayers = Object.values(betManager.tableBets).reduce((s, v) => s + v, 0);
+        const houseProfitCalc    = Object.keys(w).reduce((sum, zone) => {
+            const bet = betManager.tableBets[zone] || 0;
+            if (!w[zone]) return sum + bet;
+            return sum - Math.floor(bet * (r[zone]?.multiplier || 1) * 0.95);
+        }, 0);
+        try {
+            await GameRoundService.insert({
+                settled_at:       settledAt,
+                target_win_rate:  this.lastWinRate,
+                banker_type:      r.banker.typeName,
+                banker_cards:     r.banker.chineseHand?.join(' '),
+                tian_type:        r.tian.typeName,  tian_win:  w.tian,
+                di_type:          r.di.typeName,    di_win:    w.di,
+                xuan_type:        r.xuan.typeName,  xuan_win:  w.xuan,
+                huang_type:       r.huang.typeName, huang_win: w.huang,
+                banker_win_count: Object.values(w).filter(v => !v).length,
+                had_swap:         this.hadSwap,
+                had_force:        this.hadForce,
+                failed_releases:  this.lastFailedReleases,
+                total_bet:        totalBetAllPlayers,
+                house_profit:     houseProfitCalc,
+            });
+        } catch (err) {
+            console.error('⚠️ 寫入牌局紀錄失敗:', err.message);
+        }
     }
 
     async _settleJackpot(sockets) {
@@ -538,6 +578,8 @@ class GameTable {
         this.phase = PHASES.BETTING;
         this.countdown = TIMING.BETTING_DURATION;
         this.isBetLocked = false;
+        this.hadSwap  = false;
+        this.hadForce = false;
         this.io.emit('bet_lock', { lock: false });
         this.generateResult();
         console.log("🆕 新局開始，牌局結果已預先生成");
