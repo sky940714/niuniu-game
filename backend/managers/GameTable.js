@@ -186,24 +186,40 @@ class GameTable {
 
     generateResult() {
         try {
-            const isPeak  = this._isPeakHour();
-            const winRate = isPeak ? 0.69 : 0.60;
-            const timeTag = isPeak ? '🔴熱門' : '🟢離峰';
-            this.lastWinRate = winRate;
+            const isPeak      = this._isPeakHour();
+            // 莊家保底強度：離峰妞6(tier6)，熱門時段妞7(tier7)
+            // 閒家完全隨機，靠莊家保底強牌 + 5%手續費產生自然優勢
+            const bankerFloor = isPeak ? 7 : 6;
+            const timeTag     = isPeak ? '🔴熱門' : '🟢離峰';
+            this.lastWinRate  = isPeak ? 0.69 : 0.60; // 僅供紀錄用
 
             const excludedCards = [];
             const hands   = {};
             const results = {};
 
-            // ── 1. 莊家隨機發牌（若牌型被禁止則重試，最多 10 次）──
+            // ── 1. 莊家保底發牌（tier >= bankerFloor，最多嘗試 30 次）──
             let bankerHand = null;
-            for (let i = 0; i < 10; i++) {
+            for (let i = 0; i < 30; i++) {
                 const h = gameLogic.generateRandomHand(excludedCards);
                 if (!h) break;
-                const res = gameLogic.calculateHand(h);
-                if (!this.bannedHandTypes.has(gameLogic.getHandTypeKey(res))) {
+                const res     = gameLogic.calculateHand(h);
+                const tier    = gameLogic.getResultTier(res);
+                const typeKey = gameLogic.getHandTypeKey(res);
+                if (tier >= bankerFloor && !this.bannedHandTypes.has(typeKey)) {
                     bankerHand = h;
                     break;
+                }
+            }
+            // 保底失敗（極少數情況）→ 放寬條件只排除禁牌
+            if (!bankerHand) {
+                for (let i = 0; i < 10; i++) {
+                    const h = gameLogic.generateRandomHand(excludedCards);
+                    if (!h) break;
+                    const res = gameLogic.calculateHand(h);
+                    if (!this.bannedHandTypes.has(gameLogic.getHandTypeKey(res))) {
+                        bankerHand = h;
+                        break;
+                    }
                 }
             }
             if (!bankerHand) bankerHand = gameLogic.createDeck().slice(0, 5);
@@ -212,26 +228,27 @@ class GameTable {
             excludedCards.push(...bankerHand);
             results.banker = gameLogic.calculateHand(bankerHand);
 
-            // ── 2. 每門獨立精確控制勝率 ──────────────────────────
-            let failedReleases = 0;
+            // ── 2. 閒家完全隨機（禁牌除外），靠莊家保底強牌產生自然優勢 ──
+            const failedReleases = 0;
 
             for (const zone of ['tian', 'di', 'xuan', 'huang']) {
-                const bankerShouldWin = Math.random() < winRate;
                 let hand = null;
 
-                if (bankerShouldWin) {
-                    // 生成比莊弱的牌 → 莊贏
-                    hand = gameLogic.generateWeakerHand(results.banker, excludedCards, this.bannedHandTypes);
-                } else {
-                    // 生成比莊強的牌 → 玩家贏（放水）
-                    hand = gameLogic.generateStrongerHand(results.banker, excludedCards, this.bannedHandTypes);
-                    if (!hand) failedReleases++;
+                // 隨機發牌，排除禁牌，最多嘗試 15 次
+                for (let i = 0; i < 15; i++) {
+                    const h = gameLogic.generateRandomHand(excludedCards);
+                    if (!h) break;
+                    const res     = gameLogic.calculateHand(h);
+                    const typeKey = gameLogic.getHandTypeKey(res);
+                    if (!this.bannedHandTypes.has(typeKey)) {
+                        hand = h;
+                        break;
+                    }
                 }
 
-                // fallback：隨機發牌（結果不保證符合目標，記入 log）
+                // 最終 fallback
                 if (!hand) hand = gameLogic.generateRandomHand(excludedCards);
                 if (!hand) {
-                    // 最後保底：從剩餘牌堆取前 5 張，確保不與已發牌重複
                     const remaining = gameLogic.createDeck().filter(
                         c => !excludedCards.some(e => e.suit === c.suit && e.rank === c.rank)
                     );
@@ -260,9 +277,8 @@ class GameTable {
             this.roundResult = { hands, results, winners };
 
             const bankerWinCount = Object.values(winners).filter(w => !w).length;
-            const failNote = failedReleases > 0 ? ` ⚠️ ${failedReleases}門因禁牌無法放水` : '';
             this.lastFailedReleases = failedReleases;
-            console.log(`🎯 [RNG] ${timeTag} | 目標勝率:${(winRate*100).toFixed(0)}% | 莊家牌型:${results.banker.typeName} | 莊贏${bankerWinCount}/4門${failNote}`);
+            console.log(`🎯 [RNG] ${timeTag} | 保底tier${bankerFloor} | 莊家牌型:${results.banker.typeName} | 莊贏${bankerWinCount}/4門`);
 
         } catch (error) {
             console.error('發牌邏輯錯誤:', error);
