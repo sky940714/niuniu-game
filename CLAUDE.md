@@ -51,6 +51,7 @@ backend/
     BotManager.js       # Simulated bot players (UI only, bets not settled)
   services/
     userService.js      # DB queries: findById, findByUsername, register, updateBalance
+    adminUserService.js # Admin account CRUD: getAll, create, changePassword, delete
   utils/db.js           # MySQL2 connection pool
 ```
 
@@ -64,11 +65,15 @@ backend/
 
 **Single-session enforcement**: `activeSessions` Map (`db_id → socketId`) in `index.js`. New login or token-reconnect kicks existing session with `error_msg` before connecting.
 
-**Login rate limiting**: 5 attempts per username per 60 seconds, enforced in `index.js` via `loginAttempts` Map.
+**Login rate limiting**: 5 attempts per username per 60 seconds, enforced in `index.js` via `loginAttempts` Map. Rate limit only triggers on wrong password — correct-password-but-banned attempts do NOT count. Admin unbanning a player also clears their rate limit via `clearLoginRateLimit()`.
 
-**Admin API auth**: All `/api/admin/*` routes require `x-admin-secret` header matching `process.env.ADMIN_SECRET` (set in `backend/.env`). The admin frontend sends this via `adminHeaders` constant in `admin/src/App.jsx`.
+**Admin API auth**: All `/api/admin/*` routes require JWT Bearer token (issued by `POST /api/admin/login`) OR `x-admin-secret` header. The `adminAuth` middleware decodes `req.adminUsername` for audit logging. Admin JWT has `audience: 'admin'`.
 
 **B-mode risk control**: `MAX_PAYOUT_ODDS = 8` (matches highest hand: 五小妞 8×). Formula: `(totalBet + newAmount) × 8 ≤ balance`. Frontend mirrors this with `MAX_ODDS = 8` in `GameUI/index.jsx`.
+
+**Player ban**: `is_banned` column on `users` table (TINYINT, default 0). Ban immediately sends `force_logout` socket event to active session then disconnects. Login blocked for banned users.
+
+**Maintenance mode**: `isMaintenance` boolean in `index.js`. When enabled, blocks all logins/registrations and broadcasts `maintenance_mode` socket event to all clients.
 
 ### Player Client Layer Stack (room view)
 
@@ -81,7 +86,7 @@ During squeeze (咪牌), both canvas and parent container are raised to `zIndex:
 
 ### State Management
 
-**Zustand** (`src/stores/useGameStore.js`) — navigation only: `currentPage` (`login` | `lobby` | `room`), `user`, `selectedRoom`.
+**Zustand** (`src/stores/useGameStore.js`) — navigation only: `currentPage` (`login` | `lobby` | `room`), `user`, `selectedRoom`, `isMaintenance`.
 
 **`GameUI` local state** — all real-time data: phase, countdown, bets, table chips, win zones. Driven entirely by Socket.IO events.
 
@@ -94,6 +99,9 @@ Key inbound (server → client):
 - `update_balance` — `{ balance, winAmount? }`
 - `update_table_bets` — chip animation broadcast (includes `isBot` flag for bot bets)
 - `error_msg` — fatal errors trigger logout; non-fatal show alert
+- `force_logout` — `{ message }` — always triggers `logout()` (used for ban)
+- `maintenance_mode` — `{ enabled, message? }` — toggles `isMaintenance` in store; if enabled and in room, calls `exitRoom()`
+- `init_state` — includes `isMaintenance` field to sync client state on connect
 
 Key outbound (client → server):
 - `login` — `{ username, password }`
@@ -128,7 +136,27 @@ Card asset naming: `card_{suit}_{rank}.png`, suit ∈ `{spades, hearts, diamonds
 
 ### Admin Panel
 
-Polls `GET /api/admin/preview` (requires `x-admin-secret` header) every 1 second. Two-click swap: click zone A → click zone B → confirm → `POST /api/admin/swap-hand { pos1, pos2 }`. Zones: `banker | tian | di | xuan | huang`.
+#### 功能頁籤
+- **玩家管理** — 搜尋/列出玩家，點擊查看詳情（餘額、開分紀錄、封鎖狀態）
+- **開分紀錄** — `balance_logs` 資料表，記錄每次手動調整（操作者、前後餘額、備注）
+- **牌局紀錄** — 歷史牌局查詢
+- **🔐 系統管理** — 維護模式開關 + 管理員帳號 CRUD
+
+#### Admin 登入
+- `POST /api/admin/login` — `{ username, password }` → 返回 JWT（audience: 'admin'）
+- Admin panel 將 JWT 存在 `localStorage.admin_token`，每次 API 呼叫帶 `Authorization: Bearer <token>`
+
+#### 手牌換位（原功能）
+Polls `GET /api/admin/preview` every 1 second. Two-click swap: click zone A → click zone B → confirm → `POST /api/admin/swap-hand { pos1, pos2 }`. Zones: `banker | tian | di | xuan | huang`.
+
+### DB Tables
+
+- `users` — 玩家帳號，含 `is_banned TINYINT(1) DEFAULT 0`
+- `balance_logs` — 開分紀錄：`user_id, username, admin_username, amount, balance_before, balance_after, note, created_at`
+- `admins` — 管理員帳號：`id, username, password_hash, created_at`
+- `game_rounds` / `round_bets` — 牌局紀錄（由 GameTable 寫入）
+
+**MySQL 5.7 compatibility**: `ALTER TABLE ADD COLUMN IF NOT EXISTS` is NOT supported. Use INFORMATION_SCHEMA check before adding columns.
 
 ## Environment Variables (`backend/.env`)
 
@@ -139,7 +167,7 @@ DB_USER=root
 DB_PASS=...
 DB_NAME=prestige_niu_niu
 JWT_SECRET=...
-ADMIN_SECRET=...     # Required for admin API access
+ADMIN_SECRET=...     # Fallback for admin API access (legacy x-admin-secret header)
 ```
 
 ## Backend URL
@@ -177,7 +205,7 @@ The script does:
 4. `scp -r admin/dist/. root@207.148.98.43:/var/www/admin/`
 5. `ssh` chmod 755 on both directories
 
-**Note**: Backend (`/var/www/backend/`) is NOT updated by this script. Backend changes require manual SCP of `backend/` files and `pm2 restart` on the server.
+**Note**: Backend (`/var/www/backend/`) is NOT updated by this script. Backend changes require manual SCP of individual `backend/` files and `pm2 restart niu-niu` on the server.
 
 ### Environment Files (git-ignored, create manually)
 

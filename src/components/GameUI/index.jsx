@@ -142,12 +142,17 @@ const GameUI = () => {
   const roundBetsRef        = useRef({ tian: 0, di: 0, xuan: 0, huang: 0 });
   const roundCountRef       = useRef(0);
   const resultPopupTimerRef = useRef(null);
+  const returnFromHiddenRef    = useRef(false); // 追蹤是否從背景返回
+  const isFullyInitializedRef  = useRef(false); // 收到第一次 init_state 後才算初始化完成
 
   const isBettingPhase = gameState === PHASES.BETTING;
 
   // gameState ref 供 visibilitychange 閉包讀最新值
   const gameStateRef = useRef(gameState);
   useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
+
+  // iAmBanker ref 供 socket 事件閉包讀最新值
+  const iAmBankerRef = useRef(false);
 
   const totalCurrentBet = Object.values(currentBets).reduce((a, b) => a + b, 0);
   const maxAffordableBet = Math.floor((balance + totalCurrentBet) / MAX_ODDS) - totalCurrentBet;
@@ -217,7 +222,7 @@ const GameUI = () => {
         }
 
         if (data.phase === PHASES.RESULT && data.roundResult) {
-            const { winners } = data.roundResult;
+            const { winners, results } = data.roundResult;
             const winZoneIds = [];
             if (winners.tian)  winZoneIds.push(0);
             if (winners.di)    winZoneIds.push(1);
@@ -226,17 +231,38 @@ const GameUI = () => {
             setWinZones(winZoneIds);
             gameApp.revealAllRemaining();
 
-            // 顯示本局輸贏彈窗（延遲 1.5s，讓發牌動畫先跑）
-            if (roundBetTotalRef.current > 0) {
-                const betTotal   = roundBetTotalRef.current;
-                const winAmount  = roundWinAmountRef.current;
-                // 優先使用後端傳來的真實淨損益（含莊家倍率追賠）
-                // fallback 為舊算法（不含追賠，僅本金）
+            if (iAmBankerRef.current) {
+                // ── 莊家結算紀錄 ──
+                const net = roundNetChangeRef.current || 0;
+                roundCountRef.current += 1;
+                const bankerEntry = {
+                    round:      roundCountRef.current,
+                    type:       'banker',
+                    net,
+                    bankerType: results?.banker?.typeName || '',
+                    // winZones: 莊家贏 = 玩家輸 = !winners[zone]
+                    winZones: {
+                        tian:  !winners.tian,
+                        di:    !winners.di,
+                        xuan:  !winners.xuan,
+                        huang: !winners.huang,
+                    },
+                };
+                setBetHistory(prev => [...prev, bankerEntry].slice(-30));
+                clearTimeout(resultPopupTimerRef.current);
+                resultPopupTimerRef.current = setTimeout(() => {
+                    setRoundResultPopup({ betTotal: 0, winAmount: 0, net, isBanker: true });
+                    if (net > 0) soundManager.win();
+                    else         soundManager.lose();
+                }, 1500);
+            } else if (roundBetTotalRef.current > 0) {
+                // ── 玩家投注紀錄 ──
+                const betTotal  = roundBetTotalRef.current;
+                const winAmount = roundWinAmountRef.current;
                 const net = roundNetChangeRef.current !== null
                     ? roundNetChangeRef.current
                     : winAmount - betTotal;
 
-                // 儲存投注紀錄
                 roundCountRef.current += 1;
                 const entry = {
                     round:     roundCountRef.current,
@@ -267,13 +293,46 @@ const GameUI = () => {
                 2: data.myBets.xuan  || 0,
                 3: data.myBets.huang || 0,
             });
-            setTotalContributions(0); // 重連時無法還原彩金貢獻，從 0 重算
+            setTotalContributions(0);
         }
         if (data.bankerStatus) setBankerStatus(data.bankerStatus);
-        if (data.phase !== PHASES.BETTING) {
-            const hasBets = data.myBets && Object.values(data.myBets).some(v => v > 0);
-            if (!hasBets) setShowMidRoundNotice(true);
+        if (data.jackpotAmount) setJackpotAmount(data.jackpotAmount);
+
+        // 下注階段重連：從 tableBets 還原機器人籌碼視覺
+        if (data.phase === PHASES.BETTING && data.tableBets) {
+            const ZONE_KEYS = ['tian', 'di', 'xuan', 'huang'];
+            const myBets = data.myBets || {};
+            setTimeout(() => {
+                const ghostChips = [];
+                ZONE_KEYS.forEach((key, zoneId) => {
+                    const total = (data.tableBets[key] || 0) - (myBets[key] || 0);
+                    if (total <= 0) return;
+                    const zoneEl = zoneRefs.current[zoneId];
+                    if (!zoneEl) return;
+                    const targetPos = getChipPosFromRect(zoneEl.getBoundingClientRect());
+                    // 選最接近的籌碼面額代表該門累積量
+                    const chipData = [...CHIPS].sort((a, b) => b.val - a.val).find(c => c.val <= total) || CHIPS[0];
+                    ghostChips.push({
+                        id: `ghost_${key}_${Date.now()}`,
+                        val: chipData.val,
+                        img: chipData.img,
+                        targetX: targetPos.x,
+                        targetY: targetPos.y,
+                        targetZoneId: zoneId,
+                    });
+                });
+                if (ghostChips.length > 0) setTableChips(prev => [...prev, ...ghostChips]);
+            }, 150);
         }
+
+        const hasBets = data.myBets && Object.values(data.myBets).some(v => v > 0);
+        if (!hasBets) {
+            if (data.phase !== PHASES.BETTING || returnFromHiddenRef.current) {
+                setShowMidRoundNotice(true);
+            }
+        }
+        returnFromHiddenRef.current   = false;
+        isFullyInitializedRef.current = true;
     };
 
     const onUpdateBalance = (data) => {
@@ -371,7 +430,20 @@ const GameUI = () => {
 
     if (socket.connected) socket.emit('request_state');
 
+    // 偵測使用者將應用切到背景再返回（最小化、切換 App 等）
+    // 只有在初始化完成後才追蹤，避免切頁過渡動畫誤觸發
+    const handleVisibilityChange = () => {
+        if (!isFullyInitializedRef.current) return;
+        if (document.visibilityState === 'hidden') {
+            returnFromHiddenRef.current = true;
+        } else if (document.visibilityState === 'visible' && returnFromHiddenRef.current) {
+            if (socket.connected) socket.emit('request_state');
+        }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
         socket.off('time_tick',        onTimeTick);
         socket.off('phase_change',     onPhaseChange);
         socket.off('init_state',       onInitState);
@@ -395,6 +467,7 @@ const GameUI = () => {
 
   // ── 莊家推導狀態（必須在所有參照它的 useEffect 之前宣告）────────
   const iAmBanker  = !!(bankerStatus.banker && bankerStatus.banker.username === username);
+  useEffect(() => { iAmBankerRef.current = iAmBanker; }, [iAmBanker]);
   const iAmInQueue = !!(bankerStatus.queue?.some(q => q.username === username));
 
   // ── 做莊中離開頁面警告 ────────────────────────────────────────
@@ -432,7 +505,7 @@ const GameUI = () => {
 
   // ── 下注 ─────────────────────────────────────────────────────
   const handleBetZone = (zoneId) => {
-    if (!isBettingPhase || !isLoggedIn || isBetLocked || iAmBanker) return;
+    if (!isBettingPhase || !isLoggedIn || isBetLocked || iAmBanker || showMidRoundNotice) return;
     if (selectedChipVal > maxAffordableBet) {
         alert(`餘額不足以支付最高賠付 (需保留 ${MAX_ODDS} 倍本金)`);
         return;
@@ -1241,7 +1314,7 @@ const styles = {
       position: 'fixed', inset: 0, zIndex: 9000,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'rgba(4,6,15,0.78)', backdropFilter: 'blur(4px)',
-      pointerEvents: 'none',
+      pointerEvents: 'all',
   },
   midRoundCard: {
       background: 'rgba(14,16,28,0.96)', border: '1px solid rgba(212,175,55,0.45)',

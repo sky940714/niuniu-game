@@ -88,6 +88,10 @@ const GameRoundService = {
         return { rows, total: Number(total), page, limit };
     },
 
+    async clearAll() {
+        await db.execute('DELETE FROM game_rounds');
+    },
+
     // 統計近 N 局的實際莊家勝率
     async getStats(recentCount = 100) {
         const safe = parseInt(recentCount, 10);

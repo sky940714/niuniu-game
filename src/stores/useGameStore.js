@@ -5,6 +5,7 @@ const useGameStore = create((set, get) => ({
   currentPage: 'login',
   selectedRoom: null,
   user: null,
+  isMaintenance: false,
 
   // --- 動作函式 ---
   setCurrentPage: (page) => set({ currentPage: page }),
@@ -66,6 +67,8 @@ const useGameStore = create((set, get) => ({
     if (!state.user) return state;
     return { user: { ...state.user, balance } };
   }),
+
+  setMaintenanceMode: (enabled) => set({ isMaintenance: !!enabled }),
 }));
 
 export default useGameStore;

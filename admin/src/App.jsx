@@ -1,10 +1,243 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API_URL      = (import.meta.env.VITE_API_URL || "http://localhost:3001") + "/api/admin";
-const ADMIN_SECRET = import.meta.env.VITE_ADMIN_SECRET || "Prestige_Admin_X7k9_2026";
-const H            = { headers: { 'x-admin-secret': ADMIN_SECRET } };
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API_URL  = BASE_URL + "/api/admin";
+
+// Access Token 存記憶體（不存 localStorage）
+let _accessToken = null;
+let H = { headers: {} };
+let _forceLogout = null; // 由 App component 設定
+
+function _setAccessToken(token) {
+    _accessToken = token;
+    H = { headers: { 'Authorization': `Bearer ${token}` } };
+}
+
+// Axios 攔截器：401 時自動換 Token，失敗則強制登出
+axios.interceptors.response.use(
+    res => res,
+    async err => {
+        const orig = err.config;
+        if (err.response?.status === 401 && !orig._retry) {
+            orig._retry = true;
+            const rt = localStorage.getItem('admin_refresh_token');
+            if (rt) {
+                try {
+                    const r = await axios.post(`${BASE_URL}/api/admin/refresh`, { refreshToken: rt });
+                    localStorage.setItem('admin_refresh_token', r.data.refreshToken);
+                    _setAccessToken(r.data.token);
+                    orig.headers['Authorization'] = `Bearer ${r.data.token}`;
+                    return axios(orig);
+                } catch {
+                    localStorage.removeItem('admin_refresh_token');
+                    _accessToken = null;
+                    H = { headers: {} };
+                    if (_forceLogout) _forceLogout();
+                }
+            } else {
+                if (_forceLogout) _forceLogout();
+            }
+        }
+        return Promise.reject(err);
+    }
+);
+
+// ─── 登入頁（ERP 企業管理系統風格）──────────────────────────────
+function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState('');
+  const [showPwd,  setShowPwd]  = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const res = await axios.post(`${BASE_URL}/api/admin/login`, { username, password });
+      onLogin(res.data.token, res.data.refreshToken);
+    } catch (err) {
+      setError(err.response?.data?.error || '帳號或密碼錯誤，請重試');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh', minWidth: '1100px',
+      background: 'linear-gradient(135deg, #e8f0fe 0%, #f0f4ff 50%, #e8edf8 100%)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'Segoe UI','PingFang TC','Microsoft JhengHei',sans-serif",
+    }}>
+      {/* 裝飾圓形 */}
+      <div style={{ position:'fixed', top:'-120px', right:'-80px', width:'400px', height:'400px',
+        borderRadius:'50%', background:'rgba(37,99,235,0.07)', pointerEvents:'none' }} />
+      <div style={{ position:'fixed', bottom:'-100px', left:'-60px', width:'320px', height:'320px',
+        borderRadius:'50%', background:'rgba(37,99,235,0.05)', pointerEvents:'none' }} />
+
+      {/* 主卡片：雙欄 */}
+      <div style={{
+        display: 'flex', width: '880px', height: '520px',
+        borderRadius: '16px', overflow: 'hidden',
+        boxShadow: '0 24px 80px rgba(37,99,235,0.14), 0 4px 16px rgba(0,0,0,0.08)',
+      }}>
+
+        {/* ── 左欄：系統資訊 ── */}
+        <div style={{
+          width: '340px', flexShrink: 0,
+          background: 'linear-gradient(160deg, #1e3a8a 0%, #1d4ed8 55%, #2563eb 100%)',
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          padding: '48px 40px', color: '#fff', textAlign: 'center',
+          position: 'relative', overflow: 'hidden',
+        }}>
+          {/* 背景裝飾網格 */}
+          <div style={{ position:'absolute', inset:0, opacity:0.06,
+            backgroundImage:'linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px)',
+            backgroundSize:'32px 32px', pointerEvents:'none' }} />
+
+          <div style={{ position:'relative', zIndex:1 }}>
+            {/* Logo */}
+            <div style={{
+              width:'72px', height:'72px', borderRadius:'18px',
+              background:'rgba(255,255,255,0.15)', border:'1px solid rgba(255,255,255,0.25)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              margin:'0 auto 24px', fontSize:'2rem',
+              backdropFilter:'blur(8px)',
+            }}>🏨</div>
+
+            <div style={{ fontSize:'0.62rem', letterSpacing:'0.4em', color:'rgba(255,255,255,0.55)',
+              textTransform:'uppercase', marginBottom:'8px' }}>
+              MANAGEMENT SYSTEM
+            </div>
+            <h1 style={{ margin:'0 0 6px', fontSize:'1.8rem', fontWeight:'700', letterSpacing:'0.15em' }}>
+              PRESTIGE
+            </h1>
+            <div style={{ fontSize:'0.75rem', color:'rgba(255,255,255,0.6)', letterSpacing:'0.12em',
+              marginBottom:'28px', textTransform:'uppercase' }}>
+              Resort &amp; Hospitality
+            </div>
+
+            <div style={{ width:'40px', height:'1px', background:'rgba(255,255,255,0.25)', margin:'0 auto 28px' }} />
+
+            <div style={{ fontSize:'0.78rem', color:'rgba(255,255,255,0.5)', lineHeight:2 }}>
+              後台管理系統<br/>
+              System v2.0
+            </div>
+          </div>
+        </div>
+
+        {/* ── 右欄：登入表單 ── */}
+        <div style={{
+          flex:1, background:'#ffffff',
+          display:'flex', flexDirection:'column', justifyContent:'center',
+          padding:'52px 52px',
+        }}>
+          {/* 頂部系統標籤 */}
+          <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'32px' }}>
+            <div style={{ width:'4px', height:'24px', background:'#2563eb', borderRadius:'2px' }} />
+            <span style={{ fontSize:'0.72rem', color:'#64748b', fontWeight:'600', letterSpacing:'0.05em', textTransform:'uppercase' }}>
+              Administrator Login
+            </span>
+          </div>
+
+          <h2 style={{ margin:'0 0 6px', fontSize:'1.5rem', fontWeight:'700', color:'#0f172a' }}>
+            管理員登入
+          </h2>
+          <p style={{ margin:'0 0 32px', fontSize:'0.82rem', color:'#94a3b8' }}>
+            請輸入授權帳號與密碼以進入管理系統
+          </p>
+
+          <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:'18px' }}>
+            {/* 帳號 */}
+            <div>
+              <label style={{ display:'block', fontSize:'0.75rem', fontWeight:'600',
+                color:'#374151', marginBottom:'7px' }}>帳號</label>
+              <input
+                type="text" value={username}
+                onChange={e => setUsername(e.target.value)}
+                required autoComplete="username"
+                placeholder="請輸入管理員帳號"
+                style={{
+                  width:'100%', boxSizing:'border-box',
+                  padding:'11px 14px', borderRadius:'8px',
+                  border:'1.5px solid #e2e8f0', background:'#f8fafc',
+                  fontSize:'0.9rem', color:'#0f172a', outline:'none',
+                  transition:'border-color 0.15s',
+                }}
+                onFocus={e=>e.target.style.borderColor='#2563eb'}
+                onBlur={e=>e.target.style.borderColor='#e2e8f0'}
+              />
+            </div>
+
+            {/* 密碼 */}
+            <div>
+              <label style={{ display:'block', fontSize:'0.75rem', fontWeight:'600',
+                color:'#374151', marginBottom:'7px' }}>密碼</label>
+              <div style={{ position:'relative' }}>
+                <input
+                  type={showPwd ? 'text' : 'password'} value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required autoComplete="current-password"
+                  placeholder="請輸入密碼"
+                  style={{
+                    width:'100%', boxSizing:'border-box',
+                    padding:'11px 44px 11px 14px', borderRadius:'8px',
+                    border:'1.5px solid #e2e8f0', background:'#f8fafc',
+                    fontSize:'0.9rem', color:'#0f172a', outline:'none',
+                    transition:'border-color 0.15s',
+                  }}
+                  onFocus={e=>e.target.style.borderColor='#2563eb'}
+                  onBlur={e=>e.target.style.borderColor='#e2e8f0'}
+                />
+                <button type="button" onClick={()=>setShowPwd(v=>!v)} style={{
+                  position:'absolute', right:'12px', top:'50%', transform:'translateY(-50%)',
+                  background:'none', border:'none', cursor:'pointer',
+                  color:'#94a3b8', fontSize:'0.85rem', padding:'2px',
+                }}>
+                  {showPwd ? '🙈' : '👁️'}
+                </button>
+              </div>
+            </div>
+
+            {/* 錯誤訊息 */}
+            {error && (
+              <div style={{
+                padding:'10px 14px', borderRadius:'8px',
+                background:'#fef2f2', border:'1px solid #fecaca',
+                color:'#dc2626', fontSize:'0.82rem', display:'flex', alignItems:'center', gap:'8px',
+              }}>
+                <span>⚠</span>{error}
+              </div>
+            )}
+
+            {/* 登入按鈕 */}
+            <button type="submit" disabled={loading} style={{
+              marginTop:'4px', padding:'12px',
+              background: loading ? '#93c5fd' : 'linear-gradient(135deg, #1d4ed8, #2563eb)',
+              border:'none', borderRadius:'8px',
+              color:'#fff', fontSize:'0.9rem', fontWeight:'700',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              letterSpacing:'0.05em', transition:'opacity 0.15s, transform 0.1s',
+              boxShadow: loading ? 'none' : '0 4px 14px rgba(37,99,235,0.35)',
+            }}>
+              {loading ? '驗 證 中…' : '登 入 系 統'}
+            </button>
+          </form>
+
+          <div style={{ marginTop:'28px', paddingTop:'20px', borderTop:'1px solid #f1f5f9',
+            fontSize:'0.7rem', color:'#cbd5e1', textAlign:'center' }}>
+            © 2024 Prestige Resort &amp; Hospitality · 授權人員專用
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const ZONE_META = {
   banker: { label: '😈 莊家', color: '#ef4444' },
@@ -147,20 +380,30 @@ const ZoneCard = ({ zone, hand, result, winner, bet, isSelected, isLocked, onCli
 const TABS = [
   { id:'board',    label:'🃏 牌局控制' },
   { id:'players',  label:'👥 在線玩家' },
-  { id:'balance',  label:'💰 餘額管理' },
+  { id:'balance',  label:'🔍 玩家查詢' },
   { id:'history',  label:'📋 歷史記錄' },
   { id:'rounds',   label:'📊 牌局紀錄' },
   { id:'announce', label:'📢 公告推播' },
   { id:'settings', label:'⚙️ 勝率設定' },
   { id:'jackpot',  label:'🏆 彩金池' },
   { id:'banker',   label:'👑 莊家管理' },
+  { id:'agents',   label:'🤝 代理管理' },
+  { id:'sysadmin', label:'🔐 系統管理' },
 ];
 
 // ─── Main ────────────────────────────────────────────────────────
 function App() {
+  // null = 驗證中, false = 未登入, true = 已登入
+  const [isAuthenticated, setIsAuthenticated] = useState(null);
   const [gameState,    setGameState]    = useState(null);
   const [clockTime,    setClockTime]    = useState('');
   const [activeTab,    setActiveTab]    = useState('board');
+  const [displayCountdown, setDisplayCountdown] = useState(null);
+  const serverSnapshotRef = useRef(null); // { countdown, receivedAt }
+  const [showIdleWarning, setShowIdleWarning] = useState(false);
+  const [idleCountdown,   setIdleCountdown]   = useState(60);
+  const idleTimerRef    = useRef(null);
+  const warningTimerRef = useRef(null);
   const [selectedZone, setSelectedZone] = useState(null);
   const [pickerZone,   setPickerZone]   = useState(null);
   const [isForcing,    setIsForcing]    = useState(false);
@@ -168,10 +411,27 @@ function App() {
   // players tab
   const [players,       setPlayers]       = useState([]);
   const [loadingPlayers,setLoadingPlayers] = useState(false);
-  // balance tab
-  const [adjUsername,  setAdjUsername]   = useState('');
-  const [adjAmount,    setAdjAmount]     = useState('');
-  const [adjResult,    setAdjResult]     = useState(null);
+  // player search tab
+  const [adjUsername,      setAdjUsername]      = useState('');
+  const [adjAmount,        setAdjAmount]        = useState('');
+  const [adjResult,        setAdjResult]        = useState(null);
+  const [playerSearch,     setPlayerSearch]     = useState('');
+  const [playerResults,    setPlayerResults]    = useState(null);
+  const [searchLoading,    setSearchLoading]    = useState(false);
+  const [unboundPlayers,   setUnboundPlayers]   = useState([]);
+  const [unboundLoading,   setUnboundLoading]   = useState(false);
+  // player list
+  const [allPlayers,       setAllPlayers]       = useState([]);
+  const [allPlayersTotal,  setAllPlayersTotal]  = useState(0);
+  const [allPlayersPage,   setAllPlayersPage]   = useState(1);
+  const [allPlayersAgent,  setAllPlayersAgent]  = useState('');
+  const [allPlayersSearch, setAllPlayersSearch] = useState('');
+  const [allPlayersLoading,setAllPlayersLoading]= useState(false);
+  // player detail
+  const [selectedPlayer,   setSelectedPlayer]  = useState(null);
+  const [playerDetail,     setPlayerDetail]    = useState(null);
+  const [detailLoading,    setDetailLoading]   = useState(false);
+  const [detailAdj,        setDetailAdj]       = useState('');
   // history tab
   const [history,        setHistory]        = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -195,6 +455,15 @@ function App() {
   const [jackpotHistTotal,  setJackpotHistTotal]   = useState(0);
   const [jackpotAdjDelta,   setJackpotAdjDelta]    = useState('');
   const [savingJackpot,     setSavingJackpot]      = useState(false);
+  // agents tab
+  const [agents,           setAgents]           = useState([]);
+  const [agentPlayers,     setAgentPlayers]     = useState(null);   // { agentId, rows }
+  const [agentSettlement,  setAgentSettlement]  = useState(null);   // settlement result
+  const [settlementRange,  setSettlementRange]  = useState({ from:'', to:'' });
+  const [showAddAgent,     setShowAddAgent]     = useState(false);
+  const [editingAgent,     setEditingAgent]     = useState(null);   // agent obj being edited
+  const [agentForm,        setAgentForm]        = useState({ name:'', referral_code:'', contact:'', credit_limit:'' });
+  const [agentLoading,     setAgentLoading]     = useState(false);
   // rounds tab
   const [rounds,          setRounds]          = useState([]);
   const [roundsTotal,     setRoundsTotal]     = useState(0);
@@ -202,10 +471,44 @@ function App() {
   const [roundsStats,     setRoundsStats]     = useState(null);
   const [loadingRounds,   setLoadingRounds]   = useState(false);
   const [statsN,          setStatsN]          = useState(100);
+  // balance logs (player detail)
+  const [balanceLogs,       setBalanceLogs]       = useState([]);
+  const [balanceLogsLoading,setBalanceLogsLoading]= useState(false);
+  const [detailNote,        setDetailNote]        = useState('');
+  // sysadmin tab
+  const [isMaintenance,     setIsMaintenance]     = useState(false);
+  const [maintenanceLoading,setMaintenanceLoading]= useState(false);
+  const [adminAccounts,     setAdminAccounts]     = useState([]);
+  const [adminAccLoading,   setAdminAccLoading]   = useState(false);
+  const [newAdminUsername,  setNewAdminUsername]  = useState('');
+  const [newAdminPassword,  setNewAdminPassword]  = useState('');
+  const [changePwdId,       setChangePwdId]       = useState(null);
+  const [changePwdVal,      setChangePwdVal]      = useState('');
 
   const fetchStatus = useCallback(async () => {
+    if (!_accessToken) return;
     try { const r = await axios.get(`${API_URL}/preview`, H); setGameState(r.data); }
     catch {}
+  }, []);
+
+  // 頁面載入時嘗試用 refresh token 自動登入
+  useEffect(() => {
+    _forceLogout = () => {
+        setIsAuthenticated(false);
+        setGameState(null);
+    };
+    const rt = localStorage.getItem('admin_refresh_token');
+    if (!rt) { setIsAuthenticated(false); return; }
+    axios.post(`${BASE_URL}/api/admin/refresh`, { refreshToken: rt })
+        .then(res => {
+            localStorage.setItem('admin_refresh_token', res.data.refreshToken);
+            _setAccessToken(res.data.token);
+            setIsAuthenticated(true);
+        })
+        .catch(() => {
+            localStorage.removeItem('admin_refresh_token');
+            setIsAuthenticated(false);
+        });
   }, []);
 
   useEffect(() => {
@@ -213,6 +516,26 @@ function App() {
     fetchStatus();
     return () => clearInterval(id);
   }, [fetchStatus]);
+
+  // 每次 poll 回來記錄快照（收到時間 + 倒數值）
+  useEffect(() => {
+    if (!gameState?.status) return;
+    serverSnapshotRef.current = {
+      countdown:  gameState.countdown ?? 0,
+      receivedAt: Date.now(),
+    };
+  }, [gameState]);
+
+  // 本地插值：每 250ms 依實際經過時間推算顯示值，消除輪詢延遲感
+  useEffect(() => {
+    const id = setInterval(() => {
+      const snap = serverSnapshotRef.current;
+      if (!snap) return;
+      const elapsed = Math.floor((Date.now() - snap.receivedAt) / 1000);
+      setDisplayCountdown(Math.max(0, snap.countdown - elapsed));
+    }, 250);
+    return () => clearInterval(id);
+  }, []);
 
   // 即時時鐘
   useEffect(() => {
@@ -224,6 +547,38 @@ function App() {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
+
+  // 閒置自動登出（15 分鐘無操作 → 60 秒倒數 → 強制登出）
+  const resetIdleTimer = useCallback(() => {
+    clearTimeout(idleTimerRef.current);
+    clearInterval(warningTimerRef.current);
+    setShowIdleWarning(false);
+    idleTimerRef.current = setTimeout(() => {
+        setShowIdleWarning(true);
+        let cnt = 60;
+        setIdleCountdown(cnt);
+        warningTimerRef.current = setInterval(() => {
+            cnt -= 1;
+            setIdleCountdown(cnt);
+            if (cnt <= 0) {
+                clearInterval(warningTimerRef.current);
+                handleLogout();
+            }
+        }, 1000);
+    }, 15 * 60 * 1000);
+  }, []); // eslint-disable-line
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const events = ['mousemove', 'click', 'keydown', 'touchstart'];
+    events.forEach(e => window.addEventListener(e, resetIdleTimer));
+    resetIdleTimer();
+    return () => {
+        events.forEach(e => window.removeEventListener(e, resetIdleTimer));
+        clearTimeout(idleTimerRef.current);
+        clearInterval(warningTimerRef.current);
+    };
+  }, [isAuthenticated, resetIdleTimer]);
 
   useEffect(() => {
     if (activeTab !== 'players') return;
@@ -337,6 +692,154 @@ function App() {
       setLastMessage(`✅ 已調整 ${adjUsername} 餘額`);
     } catch (err) { setAdjResult({ ok:false, msg:err.response?.data?.error||'調整失敗' }); }
   };
+
+  // ── 玩家搜尋 ──
+  const searchPlayers = async () => {
+    if (!playerSearch.trim()) return;
+    setSearchLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/player-search?q=${encodeURIComponent(playerSearch.trim())}`, H);
+      setPlayerResults(r.data);
+    } catch (e) { alert(e.response?.data?.error || '搜尋失敗'); }
+    finally { setSearchLoading(false); }
+  };
+
+  const fetchAllPlayers = useCallback(async (page = 1, agentId = allPlayersAgent, search = allPlayersSearch) => {
+    setAllPlayersLoading(true);
+    try {
+      const p = new URLSearchParams({ page, limit: 20 });
+      if (agentId) p.set('agentId', agentId);
+      if (search)  p.set('search', search);
+      const r = await axios.get(`${API_URL}/players?${p}`, H);
+      setAllPlayers(r.data.rows);
+      setAllPlayersTotal(r.data.total);
+      setAllPlayersPage(page);
+    } catch {}
+    finally { setAllPlayersLoading(false); }
+  }, [allPlayersAgent, allPlayersSearch]);
+
+  const fetchPlayerDetail = async (player) => {
+    setSelectedPlayer(player);
+    setDetailLoading(true);
+    setDetailAdj(''); setDetailNote('');
+    setBalanceLogs([]);
+    try {
+      const r = await axios.get(`${API_URL}/players/${player.id}/detail`, H);
+      setPlayerDetail(r.data);
+      fetchBalanceLogs(player.id);
+    } catch {}
+    finally { setDetailLoading(false); }
+  };
+
+  const fetchBalanceLogs = async (userId) => {
+    setBalanceLogsLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/balance-logs?userId=${userId}&limit=10`, H);
+      setBalanceLogs(r.data.rows || []);
+    } catch {} finally { setBalanceLogsLoading(false); }
+  };
+
+  const detailAdjustBalance = async (player) => {
+    const n = Number(detailAdj);
+    if (!n) return;
+    try {
+      const r = await axios.post(`${API_URL}/adjust-balance`, { username: player.username, amount: n, note: detailNote || undefined }, H);
+      setDetailAdj(''); setDetailNote('');
+      const nb = r.data.newBalance;
+      setPlayerDetail(prev => prev ? { ...prev, user: { ...prev.user, balance: nb } } : prev);
+      setAllPlayers(prev => prev.map(p => p.id === player.id ? { ...p, balance: nb } : p));
+      setLastMessage(`✅ ${player.username} 新餘額 $${fmt(nb)}`);
+      fetchBalanceLogs(player.id);
+    } catch (e) { alert(e.response?.data?.error || '調整失敗'); }
+  };
+
+  const banPlayer = async (player) => {
+    const isBanned = !!(player.is_banned);
+    const msg = isBanned ? `確定解鎖 ${player.username}？` : `確定封鎖 ${player.username}？封鎖後此玩家無法登入。`;
+    if (!window.confirm(msg)) return;
+    try {
+      await axios.patch(`${API_URL}/players/${player.id}/${isBanned ? 'unban' : 'ban'}`, {}, H);
+      const newBanned = !isBanned;
+      setPlayerDetail(prev => prev ? { ...prev, user: { ...prev.user, is_banned: newBanned } } : prev);
+      setAllPlayers(prev => prev.map(p => p.id === player.id ? { ...p, is_banned: newBanned } : p));
+      if (selectedPlayer?.id === player.id) setSelectedPlayer(prev => prev ? { ...prev, is_banned: newBanned } : prev);
+      setLastMessage(newBanned ? `🚫 已封鎖 ${player.username}` : `✅ 已解鎖 ${player.username}`);
+    } catch (e) { alert(e.response?.data?.error || '操作失敗'); }
+  };
+
+  const fetchMaintenance = async () => {
+    try { const r = await axios.get(`${API_URL}/maintenance`, H); setIsMaintenance(r.data.isMaintenance); } catch {}
+  };
+
+  const toggleMaintenance = async () => {
+    setMaintenanceLoading(true);
+    try {
+      const r = await axios.post(`${API_URL}/maintenance`, { enabled: !isMaintenance }, H);
+      setIsMaintenance(r.data.isMaintenance);
+      setLastMessage(r.data.isMaintenance ? '🔴 維護模式已開啟' : '🟢 維護模式已關閉');
+    } catch { setLastMessage('❌ 切換失敗'); }
+    finally { setMaintenanceLoading(false); }
+  };
+
+  const fetchAdminAccounts = async () => {
+    setAdminAccLoading(true);
+    try { const r = await axios.get(`${API_URL}/admins`, H); setAdminAccounts(r.data); }
+    catch {} finally { setAdminAccLoading(false); }
+  };
+
+  const createAdmin = async () => {
+    if (!newAdminUsername.trim() || !newAdminPassword || newAdminPassword.length < 6) return alert('請填寫帳號，密碼至少 6 碼');
+    try {
+      await axios.post(`${API_URL}/admins`, { username: newAdminUsername.trim(), password: newAdminPassword }, H);
+      setNewAdminUsername(''); setNewAdminPassword('');
+      setLastMessage(`✅ 已建立管理員 ${newAdminUsername}`);
+      fetchAdminAccounts();
+    } catch (e) { alert(e.response?.data?.error || '建立失敗'); }
+  };
+
+  const deleteAdmin = async (admin) => {
+    if (!window.confirm(`確定刪除管理員「${admin.username}」？`)) return;
+    try {
+      await axios.delete(`${API_URL}/admins/${admin.id}`, H);
+      setLastMessage(`✅ 已刪除 ${admin.username}`);
+      fetchAdminAccounts();
+    } catch (e) { alert(e.response?.data?.error || '刪除失敗'); }
+  };
+
+  const changeAdminPassword = async (id) => {
+    if (!changePwdVal || changePwdVal.length < 6) return alert('密碼至少 6 碼');
+    try {
+      await axios.put(`${API_URL}/admins/${id}/password`, { newPassword: changePwdVal }, H);
+      setChangePwdId(null); setChangePwdVal('');
+      setLastMessage('✅ 密碼已修改');
+    } catch (e) { alert(e.response?.data?.error || '修改失敗'); }
+  };
+
+  useEffect(() => { if (activeTab === 'balance') { fetchAllPlayers(1); fetchUnboundPlayers(); fetchAgents(); } }, [activeTab]);
+
+  const fetchUnboundPlayers = async () => {
+    setUnboundLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/unbound-players`, H);
+      setUnboundPlayers(r.data);
+    } catch {}
+    finally { setUnboundLoading(false); }
+  };
+
+  const assignAgent = async (userId, agentId) => {
+    try {
+      await axios.patch(`${API_URL}/users/${userId}/agent`, { agentId }, H);
+      setUnboundPlayers(prev => prev.filter(p => p.id !== userId));
+      if (playerResults) {
+        setPlayerResults(prev => prev.map(p => p.id === userId
+          ? { ...p, agent_id: agentId, agent_name: agents.find(a=>a.id===agentId)?.name || '已綁定' }
+          : p
+        ));
+      }
+      setLastMessage('✅ 已更新代理綁定');
+    } catch (e) { alert(e.response?.data?.error || '操作失敗'); }
+  };
+
 
   // ── 彩金池 ──
   const fetchJackpotData = useCallback(async (page = 1) => {
@@ -459,6 +962,82 @@ function App() {
     } catch { alert('推播失敗'); }
   };
 
+  // ── 代理管理 ──
+  const fetchAgents = useCallback(async () => {
+    try { const r = await axios.get(`${API_URL}/agents`, H); setAgents(r.data); }
+    catch {}
+  }, []);
+
+  useEffect(() => { if (activeTab === 'agents') fetchAgents(); }, [activeTab, fetchAgents]);
+
+  useEffect(() => { if (activeTab === 'sysadmin') { fetchMaintenance(); fetchAdminAccounts(); } }, [activeTab]); // eslint-disable-line
+
+  const fetchAgentPlayers = async (agentId) => {
+    try {
+      const r = await axios.get(`${API_URL}/agents/${agentId}/players`, H);
+      setAgentPlayers({ agentId, rows: r.data });
+    } catch (e) { alert(e.response?.data?.error || '載入失敗'); }
+  };
+
+  const fetchSettlement = async (agentId) => {
+    if (!settlementRange.from || !settlementRange.to) return alert('請選擇起迄日期');
+    try {
+      const r = await axios.get(`${API_URL}/agents/${agentId}/settlement?from=${settlementRange.from}&to=${settlementRange.to}`, H);
+      setAgentSettlement(r.data);
+    } catch (e) { alert(e.response?.data?.error || '載入失敗'); }
+  };
+
+  const submitAgent = async () => {
+    if (!agentForm.name || !agentForm.referral_code) return alert('名稱和推薦碼為必填');
+    setAgentLoading(true);
+    try {
+      if (editingAgent) {
+        await axios.put(`${API_URL}/agents/${editingAgent.id}`, agentForm, H);
+      } else {
+        await axios.post(`${API_URL}/agents`, agentForm, H);
+      }
+      setShowAddAgent(false);
+      setEditingAgent(null);
+      setAgentForm({ name:'', referral_code:'', contact:'', credit_limit:'' });
+      fetchAgents();
+    } catch (e) { alert(e.response?.data?.error || '操作失敗'); }
+    finally { setAgentLoading(false); }
+  };
+
+  const deleteAgent = async (agent) => {
+    if (!window.confirm(`確定刪除代理「${agent.name}」？`)) return;
+    try {
+      await axios.delete(`${API_URL}/agents/${agent.id}`, H);
+      fetchAgents();
+      if (agentPlayers?.agentId === agent.id) setAgentPlayers(null);
+    } catch (e) { alert(e.response?.data?.error || '刪除失敗'); }
+  };
+
+  const handleLogin = (token, refreshToken) => {
+    localStorage.setItem('admin_refresh_token', refreshToken);
+    _setAccessToken(token);
+    setIsAuthenticated(true);
+  };
+  const handleLogout = async () => {
+    const rt = localStorage.getItem('admin_refresh_token');
+    if (rt) {
+        try { await axios.post(`${BASE_URL}/api/admin/logout`, { refreshToken: rt }); } catch {}
+    }
+    localStorage.removeItem('admin_refresh_token');
+    _accessToken = null;
+    H = { headers: {} };
+    setIsAuthenticated(false);
+    setGameState(null);
+    setShowIdleWarning(false);
+    clearTimeout(idleTimerRef.current);
+    clearInterval(warningTimerRef.current);
+  };
+
+  // 驗證中
+  if (isAuthenticated === null) return <div className="loading">⏳ 驗證中…</div>;
+  // 未登入 → 顯示登入頁（必須在 gameState 判斷之前）
+  if (!isAuthenticated) return <LoginPage onLogin={handleLogin} />;
+
   if (!gameState) return <div className="loading">⏳ 正在連線遊戲伺服器…</div>;
 
   const { hands, results, winners, status, tableBets, theoreticalPnl, isPaused, countdown } = gameState;
@@ -467,19 +1046,61 @@ function App() {
   return (
     <div className="admin-container">
 
+      {/* ── 閒置警告彈窗 ── */}
+      {showIdleWarning && (
+        <div style={{
+          position:'fixed', inset:0, zIndex:9999,
+          background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center'
+        }}>
+          <div style={{
+            background:'#1e293b', border:'1px solid #f59e0b', borderRadius:'12px',
+            padding:'32px 40px', textAlign:'center', maxWidth:'360px', color:'#f8fafc'
+          }}>
+            <div style={{fontSize:'48px', marginBottom:'12px'}}>⚠️</div>
+            <div style={{fontSize:'18px', fontWeight:700, marginBottom:'8px'}}>閒置逾時警告</div>
+            <div style={{color:'#94a3b8', marginBottom:'16px'}}>您已閒置 15 分鐘，將在以下時間後自動登出：</div>
+            <div style={{fontSize:'48px', fontWeight:700, color:'#f59e0b', marginBottom:'20px'}}>{idleCountdown}s</div>
+            <button
+              onClick={() => { resetIdleTimer(); }}
+              style={{
+                background:'#2563eb', color:'#fff', border:'none', borderRadius:'8px',
+                padding:'10px 28px', fontSize:'15px', cursor:'pointer', fontWeight:600
+              }}
+            >繼續使用</button>
+          </div>
+        </div>
+      )}
+
       {/* ── Header ── */}
       <header className="admin-header">
         <div className="header-top">
-          <h1>🎴 妞妞後台控制中心</h1>
+          <h1>⚙️ Prestige 管理後台</h1>
           <div className="header-controls">
             <div className={`status-badge ${status ?? 'BETTING'}`}>{PHASE_LABELS[status] ?? '下注中'}</div>
-            <span className="countdown-badge">⏱ {countdown ?? '--'}s</span>
+            <span className="countdown-badge">⏱ {displayCountdown ?? countdown ?? '--'}s</span>
             <span className="clock-badge">🕐 {clockTime}</span>
             {isPaused
               ? <button className="ctrl-btn resume" onClick={()=>control('resume')}>▶ 恢復</button>
               : <button className="ctrl-btn pause"  onClick={()=>control('pause')}>⏸ 暫停</button>
             }
             <button className="ctrl-btn extend" onClick={()=>control('extend',30)}>+30s</button>
+            <button
+              onClick={toggleMaintenance}
+              disabled={maintenanceLoading}
+              style={{
+                padding:'5px 12px', borderRadius:6, cursor:'pointer',
+                fontSize:'0.78rem', fontWeight:700,
+                background: isMaintenance ? 'rgba(239,68,68,0.25)' : 'rgba(34,197,94,0.15)',
+                color: isMaintenance ? '#f87171' : '#86efac',
+                border: `1px solid ${isMaintenance ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.3)'}`,
+              }}
+            >
+              {isMaintenance ? '🔴 維護中' : '🟢 正常'}
+            </button>
+            <button className="ctrl-btn" onClick={handleLogout}
+              style={{background:'rgba(239,68,68,0.15)',color:'#f87171',border:'1px solid rgba(239,68,68,0.3)'}}>
+              登出
+            </button>
           </div>
         </div>
         <div className="system-msg">{lastMessage}</div>
@@ -590,21 +1211,303 @@ function App() {
           </div>
         )}
 
-        {/* ── Tab 3: 餘額管理 ── */}
-        {activeTab==='balance' && (
-          <div className="form-panel">
-            <h2 className="panel-title">手動調整玩家餘額</h2>
-            <div className="adj-form">
-              <label className="form-label">帳號（手機號）</label>
-              <input className="form-input" placeholder="09xxxxxxxx" value={adjUsername} onChange={e=>setAdjUsername(e.target.value)}/>
-              <label className="form-label">金額（正數＝加值，負數＝扣除）</label>
-              <input className="form-input" type="number" placeholder="例：10000 或 -5000" value={adjAmount} onChange={e=>setAdjAmount(e.target.value)}/>
-              <button className="submit-btn" onClick={adjustBalance}>確認調整</button>
+        {/* ── Tab 3: 玩家管理 ── */}
+        {activeTab==='balance' && (() => {
+          const totalPages = Math.ceil(allPlayersTotal / 20);
+          const daysAgo = (d) => {
+            if (!d) return '從未登入';
+            const diff = Math.floor((Date.now() - new Date(d)) / 86400000);
+            if (diff === 0) return '今天';
+            if (diff === 1) return '昨天';
+            return `${diff} 天前`;
+          };
+          return (
+          <div>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+              <h2 style={{ margin:0 }}>👤 玩家管理</h2>
+              <span style={{ color:'#64748b', fontSize:'0.85rem' }}>共 {allPlayersTotal} 名玩家</span>
             </div>
-            {adjResult && <div className={`adj-result ${adjResult.ok?'ok':'err'}`}>{adjResult.msg}</div>}
-            <p className="adj-hint">⚠️ 操作不可逆，請確認帳號與金額無誤後再送出。</p>
+
+            <div style={{ display:'flex', gap:16, alignItems:'flex-start' }}>
+
+              {/* ── 左側：玩家列表 ── */}
+              <div style={{ flex:'0 0 56%', minWidth:0 }}>
+
+                {/* 篩選列 */}
+                <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+                  <input className="admin-input" style={{ flex:1, minWidth:120 }}
+                    placeholder="搜尋帳號…"
+                    value={allPlayersSearch}
+                    onChange={e => setAllPlayersSearch(e.target.value)}
+                    onKeyDown={e => e.key==='Enter' && fetchAllPlayers(1, allPlayersAgent, allPlayersSearch)} />
+                  <select className="admin-input" style={{ width:140 }}
+                    value={allPlayersAgent}
+                    onChange={e => { setAllPlayersAgent(e.target.value); fetchAllPlayers(1, e.target.value, allPlayersSearch); }}>
+                    <option value="">全部代理</option>
+                    {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                  <button className="ctrl-btn" style={{ background:'#2563eb' }}
+                    onClick={() => fetchAllPlayers(1, allPlayersAgent, allPlayersSearch)}
+                    disabled={allPlayersLoading}>
+                    {allPlayersLoading ? '…' : '🔍'}
+                  </button>
+                </div>
+
+                {/* 列表 */}
+                <div style={{ overflowX:'auto' }}>
+                  <table className="data-table" style={{ width:'100%' }}>
+                    <thead>
+                      <tr><th>帳號</th><th>代理</th><th>餘額</th><th>累計投注</th><th>盈虧</th><th>最後登入</th></tr>
+                    </thead>
+                    <tbody>
+                      {allPlayers.length === 0 && !allPlayersLoading && (
+                        <tr><td colSpan={6} style={{ textAlign:'center', color:'#64748b' }}>查無玩家</td></tr>
+                      )}
+                      {allPlayers.map(p => (
+                        <tr key={p.id}
+                          onClick={() => fetchPlayerDetail(p)}
+                          style={{ cursor:'pointer', background: selectedPlayer?.id===p.id ? 'rgba(37,99,235,0.18)':'' }}>
+                          <td>
+                            <strong style={{ color: selectedPlayer?.id===p.id ? '#1d4ed8':'#0f172a' }}>{p.username}</strong>
+                            {p.is_banned ? <span style={{ marginLeft:6, fontSize:'0.68rem', background:'#dc2626', color:'#fff', borderRadius:4, padding:'1px 5px' }}>封鎖</span> : null}
+                          </td>
+                          <td style={{ fontSize:'0.82rem' }}>
+                            {p.agent_name
+                              ? <span style={{ color:'#60a5fa' }}>{p.agent_name}</span>
+                              : <span style={{ color:'#f87171', fontSize:'0.75rem' }}>未綁定</span>}
+                          </td>
+                          <td style={{ color:'#fbbf24', fontWeight:700 }}>${fmt(p.balance)}</td>
+                          <td style={{ color:'#94a3b8', fontSize:'0.85rem' }}>${fmt(p.total_bet)}</td>
+                          <td style={{ color: Number(p.total_net) <= 0 ? '#4ade80':'#f87171', fontSize:'0.85rem' }}>
+                            {Number(p.total_net) <= 0 ? '' : '+'}{fmt(p.total_net)}
+                          </td>
+                          <td style={{ fontSize:'0.78rem', color:'#64748b' }}>{daysAgo(p.last_login_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 分頁 */}
+                <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:8, padding:'10px 0', marginTop:4 }}>
+                  <button className="ctrl-btn" style={{ padding:'3px 12px', background:'#334155', fontSize:13 }}
+                    disabled={allPlayersPage <= 1}
+                    onClick={() => fetchAllPlayers(allPlayersPage - 1)}>＜</button>
+                  <span style={{ color:'#94a3b8', fontSize:13 }}>{allPlayersPage} / {totalPages || 1}</span>
+                  <button className="ctrl-btn" style={{ padding:'3px 12px', background:'#334155', fontSize:13 }}
+                    disabled={allPlayersPage >= totalPages}
+                    onClick={() => fetchAllPlayers(allPlayersPage + 1)}>＞</button>
+                </div>
+
+                {/* 未綁定區塊（收合式） */}
+                {unboundPlayers.length > 0 && (
+                  <details style={{ marginTop:12 }}>
+                    <summary style={{ cursor:'pointer', color:'#f59e0b', fontWeight:600, fontSize:'0.9rem', padding:'8px 0' }}>
+                      ⚠️ 未綁定代理玩家（{unboundPlayers.length} 人）— 點擊展開補綁
+                    </summary>
+                    <table className="data-table" style={{ width:'100%', marginTop:8 }}>
+                      <thead><tr><th>帳號</th><th>餘額</th><th>指定代理</th></tr></thead>
+                      <tbody>
+                        {unboundPlayers.map(p => (
+                          <tr key={p.id}>
+                            <td>{p.username}</td>
+                            <td>${fmt(p.balance)}</td>
+                            <td>
+                              <div style={{ display:'flex', gap:6 }}>
+                                <select style={{ background:'#1e293b', border:'1px solid #334155', borderRadius:4, color:'#f8fafc', padding:'2px 6px', fontSize:12 }}
+                                  defaultValue="" id={`agent-sel-${p.id}`}>
+                                  <option value="" disabled>選擇代理</option>
+                                  {agents.map(a => <option key={a.id} value={a.id}>{a.name}（{a.referral_code}）</option>)}
+                                </select>
+                                <button className="ctrl-btn" style={{ fontSize:11, padding:'2px 8px', background:'#7c3aed' }}
+                                  onClick={() => {
+                                    const sel = document.getElementById(`agent-sel-${p.id}`);
+                                    if (!sel.value) return alert('請先選擇代理');
+                                    assignAgent(p.id, Number(sel.value));
+                                  }}>綁定</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                )}
+              </div>
+
+              {/* ── 右側：玩家詳情 ── */}
+              <div style={{ flex:1, minWidth:0, background:'#0f172a', borderRadius:10, border:'1px solid #1e293b', padding:20, minHeight:500 }}>
+                {!selectedPlayer ? (
+                  <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:400, color:'#334155' }}>
+                    <div style={{ fontSize:48 }}>👈</div>
+                    <div style={{ marginTop:12, fontSize:'0.9rem' }}>點擊左側玩家查看詳情</div>
+                  </div>
+                ) : detailLoading ? (
+                  <div style={{ textAlign:'center', padding:40, color:'#64748b' }}>載入中…</div>
+                ) : playerDetail ? (() => {
+                  const u = playerDetail.user;
+                  return (
+                    <div>
+                      {/* 頭部 */}
+                      <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:20, paddingBottom:16, borderBottom:'1px solid #1e293b' }}>
+                        <div style={{ width:48, height:48, borderRadius:'50%', background:'linear-gradient(135deg,#2563eb,#7c3aed)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, fontWeight:700 }}>
+                          {u.username[0].toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                            <span style={{ fontWeight:700, fontSize:'1.1rem' }}>{u.username}</span>
+                            {u.is_banned && <span style={{ fontSize:'0.7rem', background:'#dc2626', color:'#fff', borderRadius:4, padding:'2px 7px', fontWeight:700 }}>已封鎖</span>}
+                          </div>
+                          <div style={{ color:'#64748b', fontSize:'0.8rem', marginTop:2 }}>
+                            ID #{u.id} &nbsp;·&nbsp;
+                            {u.agent_name
+                              ? <span style={{ color:'#60a5fa' }}>代理：{u.agent_name}</span>
+                              : <span style={{ color:'#f87171' }}>未綁定代理</span>}
+                          </div>
+                        </div>
+                        <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
+                          <button
+                            onClick={() => banPlayer(u)}
+                            style={{
+                              padding:'5px 12px', borderRadius:6, cursor:'pointer', fontSize:'0.78rem', fontWeight:700,
+                              background: u.is_banned ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                              color: u.is_banned ? '#86efac' : '#f87171',
+                              border: `1px solid ${u.is_banned ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                            }}>
+                            {u.is_banned ? '✅ 解鎖' : '🚫 封鎖'}
+                          </button>
+                          <button className="ctrl-btn" style={{ background:'#1e293b', fontSize:12 }}
+                            onClick={() => { setSelectedPlayer(null); setPlayerDetail(null); }}>✕</button>
+                        </div>
+                      </div>
+
+                      {/* 財務統計 */}
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:20 }}>
+                        {[
+                          { label:'當前餘額', value:`$${fmt(u.balance)}`, color:'#fbbf24' },
+                          { label:'累計投注', value:`$${fmt(u.total_bet)}`, color:'#f8fafc' },
+                          { label:'投注次數', value:`${fmt(u.bet_count)} 局`, color:'#94a3b8' },
+                          { label:'累計盈虧', value:`${Number(u.total_net)<=0?'':'+'}${fmt(u.total_net)}`, color: Number(u.total_net)<=0?'#4ade80':'#f87171' },
+                        ].map(item => (
+                          <div key={item.label} style={{ background:'#1e293b', borderRadius:8, padding:'10px 14px' }}>
+                            <div style={{ color:'#64748b', fontSize:'0.75rem', marginBottom:4 }}>{item.label}</div>
+                            <div style={{ color:item.color, fontWeight:700, fontSize:'1.05rem' }}>{item.value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* 時間資訊 */}
+                      <div style={{ display:'flex', gap:16, marginBottom:20, fontSize:'0.8rem', color:'#64748b' }}>
+                        <span>加入：{new Date(u.created_at).toLocaleDateString('zh-TW')}</span>
+                        <span>最後登入：{daysAgo(u.last_login_at)}</span>
+                      </div>
+
+                      {/* 調整餘額 */}
+                      <div style={{ background:'#1e293b', borderRadius:8, padding:14, marginBottom:20 }}>
+                        <div style={{ color:'#94a3b8', fontSize:'0.8rem', marginBottom:10 }}>開分 / 扣分</div>
+                        <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
+                          <input type="number" placeholder="正數開分，負數扣分"
+                            style={{ flex:1, background:'#0f172a', border:'1px solid #334155', borderRadius:6, color:'#f8fafc', padding:'6px 10px', fontSize:14 }}
+                            value={detailAdj}
+                            onChange={e => setDetailAdj(e.target.value)}
+                            onKeyDown={e => e.key==='Enter' && detailAdjustBalance(u)} />
+                          <button className="ctrl-btn" style={{ background:'#16a34a', whiteSpace:'nowrap' }}
+                            onClick={() => detailAdjustBalance(u)}>確認調整</button>
+                        </div>
+                        <input placeholder="備註（選填，例：測試金）"
+                          style={{ width:'100%', boxSizing:'border-box', background:'#0f172a', border:'1px solid #334155', borderRadius:6, color:'#94a3b8', padding:'5px 10px', fontSize:12 }}
+                          value={detailNote}
+                          onChange={e => setDetailNote(e.target.value)} />
+                      </div>
+
+                      {/* 換代理 */}
+                      <div style={{ background:'#1e293b', borderRadius:8, padding:14, marginBottom:20 }}>
+                        <div style={{ color:'#94a3b8', fontSize:'0.8rem', marginBottom:10 }}>更換所屬代理</div>
+                        <div style={{ display:'flex', gap:8 }}>
+                          <select style={{ flex:1, background:'#0f172a', border:'1px solid #334155', borderRadius:6, color:'#f8fafc', padding:'6px 10px', fontSize:13 }}
+                            defaultValue={u.agent_id || ''} id={`detail-agent-${u.id}`}>
+                            <option value="">無代理</option>
+                            {agents.map(a => <option key={a.id} value={a.id}>{a.name}（{a.referral_code}）</option>)}
+                          </select>
+                          <button className="ctrl-btn" style={{ background:'#7c3aed', whiteSpace:'nowrap' }}
+                            onClick={async () => {
+                              const sel = document.getElementById(`detail-agent-${u.id}`);
+                              await assignAgent(u.id, sel.value ? Number(sel.value) : null);
+                              setPlayerDetail(prev => prev ? { ...prev, user: { ...prev.user, agent_id: sel.value ? Number(sel.value) : null, agent_name: agents.find(a=>a.id===Number(sel.value))?.name || null } } : prev);
+                            }}>更換</button>
+                        </div>
+                      </div>
+
+                      {/* 最近投注紀錄 */}
+                      <div style={{ marginBottom:20 }}>
+                        <div style={{ color:'#94a3b8', fontSize:'0.8rem', marginBottom:10 }}>最近 10 筆投注紀錄</div>
+                        {playerDetail.recentBets.length === 0
+                          ? <div style={{ color:'#334155', fontSize:'0.85rem' }}>尚無投注紀錄</div>
+                          : (
+                            <table className="data-table" style={{ width:'100%', fontSize:'0.8rem' }}>
+                              <thead>
+                                <tr><th>時間</th><th>投注</th><th>結果</th><th>盈虧</th></tr>
+                              </thead>
+                              <tbody>
+                                {playerDetail.recentBets.map((b, i) => {
+                                  const wins = [b.tian_win, b.di_win, b.xuan_win, b.huang_win].filter(Boolean).length;
+                                  return (
+                                    <tr key={i}>
+                                      <td style={{ color:'#64748b', whiteSpace:'nowrap' }}>{new Date(b.settled_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
+                                      <td>${fmt(b.bet_total)}</td>
+                                      <td style={{ color:'#94a3b8' }}>{b.banker_type} · 贏{wins}門</td>
+                                      <td style={{ color: Number(b.net)>=0?'#4ade80':'#f87171', fontWeight:600 }}>
+                                        {Number(b.net)>=0?'+':''}{fmt(b.net)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )
+                        }
+                      </div>
+
+                      {/* 開分紀錄 */}
+                      <div>
+                        <div style={{ color:'#94a3b8', fontSize:'0.8rem', marginBottom:10 }}>最近 10 筆開分紀錄</div>
+                        {balanceLogsLoading
+                          ? <div style={{ color:'#334155', fontSize:'0.85rem' }}>載入中…</div>
+                          : balanceLogs.length === 0
+                          ? <div style={{ color:'#334155', fontSize:'0.85rem' }}>尚無開分紀錄</div>
+                          : (
+                            <table className="data-table" style={{ width:'100%', fontSize:'0.78rem' }}>
+                              <thead>
+                                <tr><th>時間</th><th>操作者</th><th>異動</th><th>異動前</th><th>異動後</th><th>備註</th></tr>
+                              </thead>
+                              <tbody>
+                                {balanceLogs.map((b, i) => (
+                                  <tr key={i}>
+                                    <td style={{ color:'#64748b', whiteSpace:'nowrap' }}>{new Date(b.created_at).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
+                                    <td style={{ color:'#60a5fa' }}>{b.admin_username}</td>
+                                    <td style={{ color: Number(b.amount)>=0?'#4ade80':'#f87171', fontWeight:700 }}>
+                                      {Number(b.amount)>=0?'+':''}{fmt(b.amount)}
+                                    </td>
+                                    <td style={{ color:'#94a3b8' }}>${fmt(b.balance_before)}</td>
+                                    <td style={{ color:'#fbbf24' }}>${fmt(b.balance_after)}</td>
+                                    <td style={{ color:'#64748b' }}>{b.note || '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )
+                        }
+                      </div>
+                    </div>
+                  );
+                })() : null}
+              </div>
+
+            </div>
           </div>
-        )}
+          );
+        })()}
+
 
         {/* ── Tab 4: 歷史記錄 ── */}
         {activeTab==='history' && (
@@ -660,20 +1563,41 @@ function App() {
               <button onClick={() => fetchRounds(roundsPage)} style={{ padding:'4px 12px', borderRadius:8, border:'none', cursor:'pointer', background:'rgba(255,255,255,0.08)', color:'#9ca3af', fontSize:'0.82rem' }}>🔄 刷新</button>
             </div>
 
+            {/* 清除資料按鈕 */}
+            <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:10 }}>
+              <button
+                onClick={async () => {
+                  if (!window.confirm('確定要清除所有牌局紀錄與投注紀錄？此操作不可逆。')) return;
+                  try {
+                    await axios.delete(`${API_URL}/clear-data`, H);
+                    setLastMessage('🗑️ 資料已清除');
+                    setRounds([]); setRoundsTotal(0); setRoundsStats(null);
+                  } catch (e) { alert(e.response?.data?.error || '清除失敗'); }
+                }}
+                style={{
+                  padding:'6px 18px', borderRadius:8, border:'1px solid rgba(239,68,68,0.4)',
+                  background:'rgba(239,68,68,0.1)', color:'#f87171',
+                  cursor:'pointer', fontSize:'0.82rem', fontWeight:600,
+                }}
+              >
+                🗑️ 清除所有紀錄
+              </button>
+            </div>
+
             {roundsStats && (
               <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:10, marginBottom:20 }}>
                 {[
-                  { label:'統計局數',   val: fmt(roundsStats.total_rounds),          color:'#fff' },
-                  { label:'目標勝率',   val: `${roundsStats.target_win_rate_pct}%`,   color:'#facc15' },
-                  { label:'實際勝率',   val: `${roundsStats.actual_win_rate_pct}%`,   color: Math.abs(roundsStats.actual_win_rate_pct - roundsStats.target_win_rate_pct) <= 3 ? '#4ade80' : '#f87171' },
-                  { label:'莊家獲利',   val: `$${fmt(roundsStats.house_profit)}`,     color: roundsStats.house_profit >= 0 ? '#4ade80' : '#f87171' },
-                  { label:'總下注額',   val: `$${fmt(roundsStats.total_bet)}`,         color:'#60a5fa' },
-                  { label:'換牌次數',   val: fmt(roundsStats.swap_count),             color:'#fb923c' },
-                  { label:'指定牌型',   val: fmt(roundsStats.force_count),            color:'#fb923c' },
-                  { label:'放水失敗',   val: fmt(roundsStats.total_failed_releases),  color: roundsStats.total_failed_releases > 0 ? '#f87171' : '#6b7280' },
+                  { label:'統計局數',   val: fmt(roundsStats.total_rounds),          color:'#0f172a' },
+                  { label:'目標勝率',   val: `${roundsStats.target_win_rate_pct}%`,   color:'#92400e' },
+                  { label:'實際勝率',   val: `${roundsStats.actual_win_rate_pct}%`,   color: Math.abs(roundsStats.actual_win_rate_pct - roundsStats.target_win_rate_pct) <= 3 ? '#166534' : '#991b1b' },
+                  { label:'莊家獲利',   val: `$${fmt(roundsStats.house_profit)}`,     color: roundsStats.house_profit >= 0 ? '#166534' : '#991b1b' },
+                  { label:'總下注額',   val: `$${fmt(roundsStats.total_bet)}`,         color:'#1e40af' },
+                  { label:'換牌次數',   val: fmt(roundsStats.swap_count),             color:'#9a3412' },
+                  { label:'指定牌型',   val: fmt(roundsStats.force_count),            color:'#9a3412' },
+                  { label:'放水失敗',   val: fmt(roundsStats.total_failed_releases),  color: roundsStats.total_failed_releases > 0 ? '#991b1b' : '#475569' },
                 ].map(({ label, val, color }) => (
-                  <div key={label} style={{ background:'rgba(255,255,255,0.05)', borderRadius:10, padding:'10px 14px', border:'1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ color:'#6b7280', fontSize:'0.72rem', marginBottom:4 }}>{label}</div>
+                  <div key={label} style={{ background:'#f8fafc', borderRadius:10, padding:'10px 14px', border:'1px solid #e2e8f0' }}>
+                    <div style={{ color:'#64748b', fontSize:'0.72rem', marginBottom:4 }}>{label}</div>
                     <div style={{ color, fontWeight:700, fontSize:'1.05rem' }}>{val}</div>
                   </div>
                 ))}
@@ -812,16 +1736,20 @@ function App() {
             )}
 
             <div className="banned-info-box">
-              <div className="banned-info-title">目前勝率設定</div>
+              <div className="banned-info-title">目前發牌模式</div>
               <div className="banned-info-row">
-                <span>熱門時段（20:00 ~ 02:00）</span>
-                <strong style={{color:'#ef4444'}}>莊家勝率 69%</strong>
+                <span>發牌方式</span>
+                <strong style={{color:'#4ade80'}}>純隨機發牌（RNG）</strong>
               </div>
               <div className="banned-info-row">
-                <span>離峰時段（02:00 ~ 20:00）</span>
-                <strong style={{color:'#2563eb'}}>莊家勝率 60%</strong>
+                <span>莊家優勢來源</span>
+                <strong style={{color:'#facc15'}}>5% 手續費 + 雙無牛莊家恆贏</strong>
               </div>
-              <div className="banned-info-note">* 使用精確每門獨立控制，每門勝率直接對應設定值</div>
+              <div className="banned-info-row">
+                <span>預期莊家自然勝率</span>
+                <strong style={{color:'#60a5fa'}}>約 52–55%</strong>
+              </div>
+              <div className="banned-info-note">* 純隨機模式下長期期望獲利約 5–10%，無需手動控制勝率</div>
             </div>
           </div>
         )}
@@ -1062,6 +1990,301 @@ function App() {
               ) : (
                 <div style={{ color:'#aaa', fontSize:'0.9rem' }}>尚無做莊記錄</div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab: 代理管理 ── */}
+        {activeTab==='agents' && (
+          <div className="section-box">
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+              <h2>🤝 代理管理</h2>
+              <button className="ctrl-btn" style={{ background:'#16a34a' }}
+                onClick={() => { setEditingAgent(null); setAgentForm({ name:'', referral_code:'', contact:'', credit_limit:'' }); setShowAddAgent(true); }}>
+                ＋ 新增代理
+              </button>
+            </div>
+
+            {/* 新增/編輯表單 */}
+            {showAddAgent && (
+              <div style={{ background:'#1e293b', border:'1px solid #334155', borderRadius:8, padding:20, marginBottom:20 }}>
+                <h3 style={{ marginBottom:14 }}>{editingAgent ? '✏️ 編輯代理' : '＋ 新增代理'}</h3>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:10, marginBottom:12 }}>
+                  <div>
+                    <div style={{ color:'#94a3b8', fontSize:12, marginBottom:4 }}>代理名稱 *</div>
+                    <input className="admin-input" value={agentForm.name}
+                      onChange={e => setAgentForm(f=>({...f, name:e.target.value}))} placeholder="例：張代理" />
+                  </div>
+                  <div>
+                    <div style={{ color:'#94a3b8', fontSize:12, marginBottom:4 }}>推薦碼 *{editingAgent && ' (不可修改)'}</div>
+                    <input className="admin-input" value={agentForm.referral_code} disabled={!!editingAgent}
+                      onChange={e => setAgentForm(f=>({...f, referral_code:e.target.value.toUpperCase()}))} placeholder="例：AGT001" />
+                  </div>
+                  <div>
+                    <div style={{ color:'#94a3b8', fontSize:12, marginBottom:4 }}>聯絡方式</div>
+                    <input className="admin-input" value={agentForm.contact}
+                      onChange={e => setAgentForm(f=>({...f, contact:e.target.value}))} placeholder="LINE / 電話" />
+                  </div>
+                  <div>
+                    <div style={{ color:'#94a3b8', fontSize:12, marginBottom:4 }}>信用額度上限</div>
+                    <input className="admin-input" type="number" value={agentForm.credit_limit}
+                      onChange={e => setAgentForm(f=>({...f, credit_limit:e.target.value}))} placeholder="0" />
+                  </div>
+                </div>
+                <div style={{ display:'flex', gap:8 }}>
+                  <button className="ctrl-btn" style={{ background:'#2563eb' }} onClick={submitAgent} disabled={agentLoading}>
+                    {agentLoading ? '處理中…' : (editingAgent ? '儲存' : '新增')}
+                  </button>
+                  <button className="ctrl-btn" style={{ background:'#475569' }}
+                    onClick={() => { setShowAddAgent(false); setEditingAgent(null); }}>取消</button>
+                </div>
+              </div>
+            )}
+
+            {/* 代理列表 */}
+            <table className="data-table" style={{ width:'100%', marginBottom:24 }}>
+              <thead>
+                <tr><th>代理名稱</th><th>推薦碼</th><th>聯絡</th><th>信用上限</th><th>玩家數</th><th>旗下總餘額</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                {agents.length === 0 && <tr><td colSpan={7} style={{ textAlign:'center', color:'#64748b' }}>尚無代理</td></tr>}
+                {agents.map(ag => (
+                  <tr key={ag.id} style={{ background: agentPlayers?.agentId===ag.id ? 'rgba(37,99,235,0.1)':'' }}>
+                    <td><strong>{ag.name}</strong></td>
+                    <td><code style={{ background:'#1e293b', padding:'2px 6px', borderRadius:4 }}>{ag.referral_code}</code></td>
+                    <td style={{ color:'#94a3b8', fontSize:'0.85rem' }}>{ag.contact || '—'}</td>
+                    <td>${fmt(ag.credit_limit)}</td>
+                    <td>{ag.player_count} 人</td>
+                    <td style={{ color: ag.total_balance > 0 ? '#4ade80':'#94a3b8' }}>${fmt(ag.total_balance)}</td>
+                    <td>
+                      <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                        <button className="ctrl-btn" style={{ fontSize:12, padding:'3px 10px', background:'#0284c7' }}
+                          onClick={() => { setAgentSettlement(null); fetchAgentPlayers(ag.id); }}>查看玩家</button>
+                        <button className="ctrl-btn" style={{ fontSize:12, padding:'3px 10px', background:'#7c3aed' }}
+                          onClick={() => { setAgentPlayers(null); setAgentSettlement(null); setSettlementRange({from:'',to:''}); fetchAgentPlayers(ag.id); document.getElementById('settlement-section')?.scrollIntoView(); }}>結算</button>
+                        <button className="ctrl-btn" style={{ fontSize:12, padding:'3px 10px', background:'#475569' }}
+                          onClick={() => { setEditingAgent(ag); setAgentForm({ name:ag.name, referral_code:ag.referral_code, contact:ag.contact||'', credit_limit:ag.credit_limit }); setShowAddAgent(true); }}>編輯</button>
+                        <button className="ctrl-btn" style={{ fontSize:12, padding:'3px 10px', background:'#991b1b' }}
+                          onClick={() => deleteAgent(ag)}>刪除</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* 玩家清單 */}
+            {agentPlayers && (
+              <div className="section-box" style={{ marginBottom:20 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+                  <h3>👥 {agents.find(a=>a.id===agentPlayers.agentId)?.name} 的玩家（{agentPlayers.rows.length} 人）</h3>
+                  <button className="ctrl-btn" style={{ background:'#475569', fontSize:12 }} onClick={() => setAgentPlayers(null)}>關閉</button>
+                </div>
+                <table className="data-table" style={{ width:'100%' }}>
+                  <thead>
+                    <tr><th>帳號</th><th>當前餘額</th><th>累計投注</th><th>累計盈虧</th><th>最後登入</th><th>加入時間</th></tr>
+                  </thead>
+                  <tbody>
+                    {agentPlayers.rows.length === 0 && <tr><td colSpan={6} style={{ textAlign:'center', color:'#64748b' }}>尚無玩家</td></tr>}
+                    {agentPlayers.rows.map(p => (
+                      <tr key={p.id}>
+                        <td><strong>{p.username}</strong></td>
+                        <td>${fmt(p.balance)}</td>
+                        <td>${fmt(p.total_bet)}</td>
+                        <td style={{ color: p.total_net >= 0 ? '#4ade80':'#f87171' }}>
+                          {p.total_net >= 0 ? '+' : ''}${fmt(p.total_net)}
+                        </td>
+                        <td style={{ fontSize:'0.8rem', color:'#94a3b8' }}>
+                          {p.last_login_at ? new Date(p.last_login_at).toLocaleString('zh-TW') : '從未登入'}
+                        </td>
+                        <td style={{ fontSize:'0.8rem', color:'#94a3b8' }}>{new Date(p.created_at).toLocaleDateString('zh-TW')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* 結算區 */}
+                <div id="settlement-section" style={{ marginTop:20, background:'#0f172a', borderRadius:8, padding:16 }}>
+                  <h4 style={{ marginBottom:12 }}>📊 結算報表</h4>
+                  <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:12, flexWrap:'wrap' }}>
+                    <div>
+                      <span style={{ color:'#94a3b8', fontSize:12 }}>起始日期</span>
+                      <input type="date" className="admin-input" style={{ marginLeft:6 }}
+                        value={settlementRange.from} onChange={e => setSettlementRange(r=>({...r, from:e.target.value}))} />
+                    </div>
+                    <div>
+                      <span style={{ color:'#94a3b8', fontSize:12 }}>結束日期</span>
+                      <input type="date" className="admin-input" style={{ marginLeft:6 }}
+                        value={settlementRange.to} onChange={e => setSettlementRange(r=>({...r, to:e.target.value}))} />
+                    </div>
+                    <button className="ctrl-btn" style={{ background:'#7c3aed' }}
+                      onClick={() => fetchSettlement(agentPlayers.agentId)}>計算結算</button>
+                  </div>
+
+                  {agentSettlement && (
+                    <div>
+                      <div style={{ display:'flex', gap:24, marginBottom:12, flexWrap:'wrap' }}>
+                        <div style={{ background:'#1e293b', borderRadius:8, padding:'12px 20px', textAlign:'center' }}>
+                          <div style={{ color:'#94a3b8', fontSize:12 }}>期間總投注</div>
+                          <div style={{ fontSize:'1.3rem', fontWeight:700 }}>${fmt(agentSettlement.totalBet)}</div>
+                        </div>
+                        <div style={{ background:'#1e293b', borderRadius:8, padding:'12px 20px', textAlign:'center' }}>
+                          <div style={{ color:'#94a3b8', fontSize:12 }}>玩家淨盈虧</div>
+                          <div style={{ fontSize:'1.3rem', fontWeight:700, color: agentSettlement.totalNet >= 0 ? '#4ade80':'#f87171' }}>
+                            {agentSettlement.totalNet >= 0 ? '+' : ''}${fmt(agentSettlement.totalNet)}
+                          </div>
+                        </div>
+                        <div style={{ background:'#7c3aed22', border:'1px solid #7c3aed', borderRadius:8, padding:'12px 20px', textAlign:'center' }}>
+                          <div style={{ color:'#94a3b8', fontSize:12 }}>代理應付你</div>
+                          <div style={{ fontSize:'1.4rem', fontWeight:700, color:'#a78bfa' }}>
+                            ${fmt(Math.abs(agentSettlement.totalNet))}
+                            <span style={{ fontSize:12, color:'#94a3b8', marginLeft:6 }}>
+                              {agentSettlement.totalNet < 0 ? '（玩家贏，代理向你收）' : '（玩家輸，代理付你）'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <table className="data-table" style={{ width:'100%' }}>
+                        <thead>
+                          <tr><th>帳號</th><th>期間投注</th><th>期間輸贏</th><th>結算後餘額</th></tr>
+                        </thead>
+                        <tbody>
+                          {agentSettlement.players.map(p => (
+                            <tr key={p.id}>
+                              <td>{p.username}</td>
+                              <td>${fmt(p.period_bet)}</td>
+                              <td style={{ color: p.period_net >= 0 ? '#4ade80':'#f87171' }}>
+                                {p.period_net >= 0 ? '+' : ''}${fmt(p.period_net)}
+                              </td>
+                              <td>${fmt(p.balance)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tab: 系統管理 ── */}
+        {activeTab==='sysadmin' && (
+          <div className="section-box">
+            <h2>🔐 系統管理</h2>
+
+            {/* 維護模式 */}
+            <div className="section-box" style={{ marginBottom:20 }}>
+              <h3 style={{ marginBottom:14 }}>維護模式</h3>
+              <div style={{ display:'flex', alignItems:'center', gap:20, flexWrap:'wrap' }}>
+                <div style={{ background: isMaintenance ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)', border:`1px solid ${isMaintenance?'rgba(239,68,68,0.35)':'rgba(34,197,94,0.35)'}`, borderRadius:10, padding:'14px 24px', display:'flex', alignItems:'center', gap:16 }}>
+                  <div style={{ fontSize:32 }}>{isMaintenance ? '🔴' : '🟢'}</div>
+                  <div>
+                    <div style={{ fontWeight:700, fontSize:'1.05rem', color: isMaintenance?'#f87171':'#86efac' }}>
+                      {isMaintenance ? '維護模式：開啟中' : '維護模式：關閉（正常服務）'}
+                    </div>
+                    <div style={{ color:'#64748b', fontSize:'0.82rem', marginTop:3 }}>
+                      {isMaintenance ? '玩家無法登入或註冊' : '所有玩家可正常登入與遊戲'}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={toggleMaintenance}
+                  disabled={maintenanceLoading}
+                  style={{
+                    padding:'10px 28px', borderRadius:8, border:'none', cursor:'pointer', fontWeight:700,
+                    background: isMaintenance ? '#16a34a' : '#dc2626',
+                    color:'#fff', fontSize:'0.9rem',
+                  }}>
+                  {maintenanceLoading ? '處理中…' : (isMaintenance ? '關閉維護模式' : '開啟維護模式')}
+                </button>
+              </div>
+              <div style={{ color:'#475569', fontSize:'0.78rem', marginTop:10 }}>
+                ⚠️ 開啟維護模式後，系統將向所有在線玩家推送公告通知，並拒絕新的登入請求。
+              </div>
+            </div>
+
+            {/* 管理員帳號管理 */}
+            <div className="section-box">
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+                <h3>管理員帳號</h3>
+                <button className="ctrl-btn" style={{ fontSize:12, background:'#334155' }}
+                  onClick={fetchAdminAccounts} disabled={adminAccLoading}>
+                  {adminAccLoading ? '載入中…' : '🔄 刷新'}
+                </button>
+              </div>
+
+              {/* 帳號列表 */}
+              <table className="data-table" style={{ width:'100%', marginBottom:20 }}>
+                <thead>
+                  <tr><th>#</th><th>帳號</th><th>建立時間</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                  {adminAccounts.length === 0 && (
+                    <tr><td colSpan={4} style={{ textAlign:'center', color:'#64748b' }}>載入中…</td></tr>
+                  )}
+                  {adminAccounts.map((adm, i) => (
+                    <tr key={adm.id}>
+                      <td style={{ color:'#64748b' }}>{i+1}</td>
+                      <td><strong>{adm.username}</strong></td>
+                      <td style={{ color:'#64748b', fontSize:'0.82rem' }}>{new Date(adm.created_at).toLocaleDateString('zh-TW')}</td>
+                      <td>
+                        <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+                          {changePwdId === adm.id ? (
+                            <>
+                              <input
+                                type="password" placeholder="新密碼（至少 6 碼）"
+                                value={changePwdVal}
+                                onChange={e => setChangePwdVal(e.target.value)}
+                                style={{ background:'#0f172a', border:'1px solid #334155', borderRadius:5, color:'#f8fafc', padding:'4px 8px', fontSize:12, width:160 }}
+                              />
+                              <button className="ctrl-btn" style={{ fontSize:11, padding:'3px 10px', background:'#16a34a' }}
+                                onClick={() => changeAdminPassword(adm.id)}>確認</button>
+                              <button className="ctrl-btn" style={{ fontSize:11, padding:'3px 10px', background:'#475569' }}
+                                onClick={() => { setChangePwdId(null); setChangePwdVal(''); }}>取消</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="ctrl-btn" style={{ fontSize:11, padding:'3px 10px', background:'#0284c7' }}
+                                onClick={() => { setChangePwdId(adm.id); setChangePwdVal(''); }}>改密碼</button>
+                              <button className="ctrl-btn" style={{ fontSize:11, padding:'3px 10px', background:'#991b1b' }}
+                                onClick={() => deleteAdmin(adm)}>刪除</button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* 新增管理員 */}
+              <div style={{ background:'#0f172a', borderRadius:8, padding:16 }}>
+                <div style={{ color:'#94a3b8', fontSize:'0.82rem', marginBottom:12, fontWeight:600 }}>新增管理員帳號</div>
+                <div style={{ display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end' }}>
+                  <div>
+                    <div style={{ color:'#64748b', fontSize:11, marginBottom:4 }}>帳號</div>
+                    <input
+                      placeholder="輸入帳號"
+                      value={newAdminUsername}
+                      onChange={e => setNewAdminUsername(e.target.value)}
+                      style={{ background:'#1e293b', border:'1px solid #334155', borderRadius:6, color:'#f8fafc', padding:'7px 12px', fontSize:13, width:160 }}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ color:'#64748b', fontSize:11, marginBottom:4 }}>密碼（至少 6 碼）</div>
+                    <input
+                      type="password" placeholder="輸入密碼"
+                      value={newAdminPassword}
+                      onChange={e => setNewAdminPassword(e.target.value)}
+                      style={{ background:'#1e293b', border:'1px solid #334155', borderRadius:6, color:'#f8fafc', padding:'7px 12px', fontSize:13, width:160 }}
+                    />
+                  </div>
+                  <button className="ctrl-btn" style={{ background:'#2563eb', padding:'7px 20px' }}
+                    onClick={createAdmin}>＋ 建立</button>
+                </div>
+              </div>
             </div>
           </div>
         )}

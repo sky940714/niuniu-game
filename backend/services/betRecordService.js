@@ -1,6 +1,59 @@
 const db = require('../utils/db');
 
 const BetRecordService = {
+    // 建表（含全欄位）＋確保新欄位存在，伺服器啟動時呼叫
+    async ensureTable() {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS bet_records (
+                id               INT AUTO_INCREMENT PRIMARY KEY,
+                user_id          INT          NOT NULL,
+                settled_at       DATETIME     NOT NULL,
+                bet_tian         INT          NOT NULL DEFAULT 0,
+                bet_di           INT          NOT NULL DEFAULT 0,
+                bet_xuan         INT          NOT NULL DEFAULT 0,
+                bet_huang        INT          NOT NULL DEFAULT 0,
+                bet_total        INT          NOT NULL DEFAULT 0,
+                win_amount       INT          NOT NULL DEFAULT 0,
+                net              INT          NOT NULL DEFAULT 0,
+                balance_after    INT          NOT NULL DEFAULT 0,
+                banker_type      VARCHAR(32)  DEFAULT NULL,
+                banker_cards     VARCHAR(64)  DEFAULT NULL,
+                tian_type        VARCHAR(32)  DEFAULT NULL,
+                tian_cards       VARCHAR(64)  DEFAULT NULL,
+                tian_win         TINYINT(1)   NOT NULL DEFAULT 0,
+                di_type          VARCHAR(32)  DEFAULT NULL,
+                di_cards         VARCHAR(64)  DEFAULT NULL,
+                di_win           TINYINT(1)   NOT NULL DEFAULT 0,
+                xuan_type        VARCHAR(32)  DEFAULT NULL,
+                xuan_cards       VARCHAR(64)  DEFAULT NULL,
+                xuan_win         TINYINT(1)   NOT NULL DEFAULT 0,
+                huang_type       VARCHAR(32)  DEFAULT NULL,
+                huang_cards      VARCHAR(64)  DEFAULT NULL,
+                huang_win        TINYINT(1)   NOT NULL DEFAULT 0,
+                is_banker_record TINYINT(1)   NOT NULL DEFAULT 0,
+                INDEX idx_user_settled (user_id, settled_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
+        // 舊資料庫若缺少 is_banker_record 欄位則補上（相容 MySQL 5.7）
+        const [[{ cnt }]] = await db.execute(`
+            SELECT COUNT(*) AS cnt
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME  = 'bet_records'
+              AND COLUMN_NAME = 'is_banker_record'
+        `);
+        if (cnt === 0) {
+            await db.execute(`
+                ALTER TABLE bet_records
+                ADD COLUMN is_banker_record TINYINT(1) NOT NULL DEFAULT 0
+            `);
+        }
+    },
+
+    async clearAll() {
+        await db.execute('DELETE FROM bet_records');
+    },
+
     async insert(data) {
         const sql = `
             INSERT INTO bet_records
@@ -11,8 +64,9 @@ const BetRecordService = {
              tian_type,  tian_cards,  tian_win,
              di_type,    di_cards,    di_win,
              xuan_type,  xuan_cards,  xuan_win,
-             huang_type, huang_cards, huang_win)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             huang_type, huang_cards, huang_win,
+             is_banker_record)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await db.execute(sql, [
             data.user_id,
@@ -39,11 +93,11 @@ const BetRecordService = {
             data.huang_type   || null,
             data.huang_cards  || null,
             data.huang_win ? 1 : 0,
+            data.is_banker_record ? 1 : 0,
         ]);
     },
 
     async getByUserId(userId, page = 1, limit = 20) {
-        // LIMIT/OFFSET 直接嵌入 SQL（已在呼叫端限制為整數），避免 mysql2 prepared statement 型別問題
         const safeLimit  = parseInt(limit,  10);
         const safeOffset = parseInt((page - 1) * limit, 10);
         const [rows] = await db.execute(

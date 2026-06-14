@@ -5,7 +5,9 @@ const { Server } = require("socket.io");
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 require('dotenv').config();
+const db = require('./utils/db');
 
 const GameTable = require('./managers/GameTable');
 const betManager = require('./managers/BetManager');
@@ -15,6 +17,8 @@ const BetRecordService = require('./services/betRecordService');
 const GameRoundService = require('./services/gameRoundService');
 const JackpotService = require('./services/jackpotService');
 const BankerService = require('./services/bankerService');
+const AdminUserService = require('./services/adminUserService');
+const AgentService = require('./services/agentService');
 const botManager = require('./managers/BotManager');
 const { JACKPOT } = require('./config/gameRules');
 
@@ -26,13 +30,13 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
 
 app.use(cors({
     origin: ALLOWED_ORIGINS,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "DELETE", "PATCH"],
     credentials: true
 }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: ALLOWED_ORIGINS, methods: ["GET", "POST"] }
+    cors: { origin: ALLOWED_ORIGINS, methods: ["GET", "POST", "DELETE"] }
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'Prestige_NiuNiu_Super_Secret_2026';
@@ -40,6 +44,9 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET || 'Prestige_Admin_X7k9_2026';
 
 // === 多裝置登入防護 (db_id -> socketId) ===
 const activeSessions = new Map();
+
+// === 維護模式 ===
+let isMaintenance = false;
 
 // === 登入速率限制 (username -> { count, resetAt }) ===
 const loginAttempts = new Map();
@@ -60,6 +67,16 @@ function checkLoginRateLimit(username) {
 
 function clearLoginRateLimit(username) {
     loginAttempts.delete(username);
+}
+
+// 合併真實下注與機器人視覺下注，供 init_state 傳給前端還原籌碼顯示
+function mergeTableBets(realBets, botTotals) {
+    const zones = ['tian', 'di', 'xuan', 'huang'];
+    const merged = {};
+    for (const z of zones) {
+        merged[z] = (realBets[z] || 0) + (botTotals[z] || 0);
+    }
+    return merged;
 }
 
 // 🚀 初始化遊戲桌
@@ -111,15 +128,20 @@ io.on('connection', (socket) => {
 
         socket.emit('auth_success', socket.user);
         socket.emit('init_state', {
-            phase: gameTable.phase,
-            countdown: gameTable.countdown,
-            tableBets: betManager.tableBets,
-            myBets: betManager.getPlayerBet(socket.user.db_id)
+            phase:        gameTable.phase,
+            countdown:    gameTable.countdown,
+            tableBets:    mergeTableBets(betManager.tableBets, botManager.getVisualTotals()),
+            myBets:       betManager.getPlayerBet(socket.user.db_id),
+            jackpotAmount: Math.floor(gameTable.jackpotAmount),
+            bankerStatus:  bankerManager.getStatus(),
+            isMaintenance,
         });
     }
 
     // 2. 註冊 (後端驗證)
     socket.on('register', async (data) => {
+        if (isMaintenance) return socket.emit('register_response', { success: false, message: '系統維護中，暫停服務，請稍後再試' });
+
         const phoneRegex    = /^09\d{8}$/;
         const passwordRegex = /^(?=.*\d).{8,20}$/;   // 8-20 碼，至少含 1 個數字
 
@@ -140,6 +162,8 @@ io.on('connection', (socket) => {
 
     // 3. 登入 (速率限制 + 後端驗證)
     socket.on('login', async (data) => {
+        if (isMaintenance) return socket.emit('login_response', { success: false, message: '系統維護中，暫停登入，請稍後再試' });
+
         if (!data.username || !data.password) {
             return socket.emit('login_response', { success: false, message: '請輸入帳號與密碼' });
         }
@@ -154,6 +178,10 @@ io.on('connection', (socket) => {
             const isMatch = user ? await bcrypt.compare(data.password, user.password) : false;
 
             if (user && isMatch) {
+                if (user.is_banned) {
+                    clearLoginRateLimit(data.username); // 密碼正確，不計入速率限制
+                    return socket.emit('login_response', { success: false, message: '此帳號已被停用，請聯繫客服' });
+                }
                 clearLoginRateLimit(data.username);
 
                 // 多裝置踢線
@@ -192,10 +220,11 @@ io.on('connection', (socket) => {
                 socket.emit('init_state', {
                     phase:        gameTable.phase,
                     countdown:    gameTable.countdown,
-                    tableBets:    betManager.tableBets,
+                    tableBets:    mergeTableBets(betManager.tableBets, botManager.getVisualTotals()),
                     myBets:       betManager.getPlayerBet(user.id),
                     jackpotAmount: Math.floor(gameTable.jackpotAmount),
                     bankerStatus:  bankerManager.getStatus(),
+                    isMaintenance,
                 });
             } else {
                 // 帳號不存在或密碼錯誤 → 同一訊息，防止枚舉
@@ -254,10 +283,11 @@ io.on('connection', (socket) => {
         socket.emit('init_state', {
             phase:        gameTable.phase,
             countdown:    gameTable.countdown,
-            tableBets:    betManager.tableBets,
+            tableBets:    mergeTableBets(betManager.tableBets, botManager.getVisualTotals()),
             myBets:       betManager.getPlayerBet(socket.user.db_id),
             jackpotAmount: Math.floor(gameTable.jackpotAmount),
             bankerStatus:  bankerManager.getStatus(),
+            isMaintenance,
         });
     });
 
@@ -327,15 +357,122 @@ app.get('/api/bet-records', jwtRestAuth, async (req, res) => {
 });
 
 // ==========================================
-// 🔐 後台管理 API - 需帶 x-admin-secret 標頭
+// 🔐 後台管理 API
 // ==========================================
 
-const adminAuth = (req, res, next) => {
-    const secret = req.headers['x-admin-secret'];
-    if (!secret || secret !== ADMIN_SECRET) {
-        return res.status(401).json({ error: '未授權，請提供正確的管理金鑰' });
+// 管理員登入（不需要 adminAuth）
+app.post('/api/admin/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        if (!username || !password)
+            return res.status(400).json({ error: '請填寫帳號與密碼' });
+
+        const user = await AdminUserService.findByUsername(username);
+        if (!user) return res.status(401).json({ error: '帳號或密碼錯誤' });
+
+        const ok = await AdminUserService.verifyPassword(password, user.password_hash);
+        if (!ok) return res.status(401).json({ error: '帳號或密碼錯誤' });
+
+        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip || 'unknown';
+
+        // 單裝置：清除此帳號舊的 refresh token
+        await db.execute('DELETE FROM admin_refresh_tokens WHERE username = ?', [username]);
+
+        // 產生 refresh token（7天）
+        const rawRefresh = crypto.randomBytes(48).toString('hex');
+        const hashRefresh = crypto.createHash('sha256').update(rawRefresh).digest('hex');
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await db.execute(
+            'INSERT INTO admin_refresh_tokens (username, token_hash, ip, created_at, expires_at) VALUES (?, ?, ?, NOW(), ?)',
+            [username, hashRefresh, ip, expiresAt]
+        );
+
+        // 登入記錄
+        await db.execute(
+            'INSERT INTO admin_login_logs (username, ip, logged_in_at) VALUES (?, ?, NOW())',
+            [username, ip]
+        );
+
+        // Access token 15 分鐘
+        const accessToken = jwt.sign(
+            { username: user.username, role: 'admin' },
+            JWT_SECRET,
+            { expiresIn: '15m', audience: 'admin' }
+        );
+
+        console.log(`🔐 [Admin] ${username} 登入成功 (IP: ${ip})`);
+        res.json({ token: accessToken, refreshToken: rawRefresh });
+    } catch (e) {
+        console.error('Admin login error:', e.message);
+        res.status(500).json({ error: '伺服器錯誤' });
     }
-    next();
+});
+
+// 管理員 Refresh Token 換新 Access Token
+app.post('/api/admin/refresh', async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+        if (!refreshToken) return res.status(401).json({ error: '請重新登入' });
+
+        const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        const [[row]] = await db.execute(
+            'SELECT * FROM admin_refresh_tokens WHERE token_hash = ? AND expires_at > NOW()',
+            [hash]
+        );
+        if (!row) return res.status(401).json({ error: '登入已過期，請重新登入' });
+
+        // 輪換：刪舊發新
+        await db.execute('DELETE FROM admin_refresh_tokens WHERE id = ?', [row.id]);
+        const newRaw = crypto.randomBytes(48).toString('hex');
+        const newHash = crypto.createHash('sha256').update(newRaw).digest('hex');
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await db.execute(
+            'INSERT INTO admin_refresh_tokens (username, token_hash, ip, created_at, expires_at) VALUES (?, ?, ?, NOW(), ?)',
+            [row.username, newHash, row.ip, expiresAt]
+        );
+
+        const accessToken = jwt.sign(
+            { username: row.username, role: 'admin' },
+            JWT_SECRET,
+            { expiresIn: '15m', audience: 'admin' }
+        );
+        res.json({ token: accessToken, refreshToken: newRaw });
+    } catch (e) {
+        console.error('Admin refresh error:', e.message);
+        res.status(500).json({ error: '伺服器錯誤' });
+    }
+});
+
+// 管理員登出：撤銷 refresh token
+app.post('/api/admin/logout', async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+        if (refreshToken) {
+            const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+            await db.execute('DELETE FROM admin_refresh_tokens WHERE token_hash = ?', [hash]);
+        }
+        res.json({ success: true });
+    } catch {
+        res.json({ success: true });
+    }
+});
+
+// adminAuth：接受 15 分鐘 Bearer JWT，並將解出的 username 掛到 req.adminUsername
+const adminAuth = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+            const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET, { audience: 'admin' });
+            req.adminUsername = decoded.username;
+            return next();
+        } catch {
+            return res.status(401).json({ error: 'Token 已過期，請重新登入' });
+        }
+    }
+    // 向下相容舊版 x-admin-secret
+    const secret = req.headers['x-admin-secret'];
+    if (secret && secret === ADMIN_SECRET) { req.adminUsername = 'system'; return next(); }
+    return res.status(401).json({ error: '未授權，請重新登入' });
 };
 
 app.get('/api/admin/preview', adminAuth, (req, res) => {
@@ -434,27 +571,143 @@ app.post('/api/admin/kick-player', adminAuth, (req, res) => {
 
 // ── 調整餘額 ──
 app.post('/api/admin/adjust-balance', adminAuth, async (req, res) => {
-    const { username, amount } = req.body;
+    const { username, amount, note } = req.body;
     if (!username || amount === undefined || isNaN(Number(amount))) {
         return res.status(400).json({ error: '缺少參數 (username, amount)' });
     }
     try {
         const user = await UserService.findByUsername(username);
         if (!user) return res.status(404).json({ error: '找不到此帳號' });
+        const balanceBefore = parseFloat(user.balance);
         const success = await UserService.updateBalance(user.id, Number(amount));
         if (!success) return res.status(422).json({ error: '調整失敗（餘額不足）' });
+        const updated = await UserService.findById(user.id);
+        const balanceAfter = parseFloat(updated.balance);
+        // 記錄開分紀錄
+        await db.execute(
+            'INSERT INTO balance_logs (user_id, username, admin_username, amount, balance_before, balance_after, note) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [user.id, username, req.adminUsername || 'system', Number(amount), balanceBefore, balanceAfter, note || null]
+        );
         // 即時同步給在線玩家
         const existingSockId = activeSessions.get(user.id);
         if (existingSockId) {
             const sock = io.sockets.sockets.get(existingSockId);
             if (sock?.user) { sock.user.balance += Number(amount); sock.emit('update_balance', { balance: sock.user.balance }); }
         }
-        const updated = await UserService.findById(user.id);
-        console.log(`👨‍💻 [Admin] 調整餘額: ${username} ${amount > 0 ? '+' : ''}${amount}`);
-        res.json({ success: true, newBalance: updated.balance });
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 調整餘額: ${username} ${amount > 0 ? '+' : ''}${amount}`);
+        res.json({ success: true, newBalance: balanceAfter });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// ── 玩家列表（分頁 + 篩選）──
+app.get('/api/admin/players', adminAuth, async (req, res) => {
+    const page   = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit  = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+    const { agentId, search } = req.query;
+
+    let where = '1=1';
+    const params = [];
+    if (agentId) { where += ' AND u.agent_id = ?'; params.push(agentId); }
+    if (search)  { where += ' AND u.username LIKE ?'; params.push(`%${search}%`); }
+
+    try {
+        const [rows] = await db.execute(`
+            SELECT u.id, u.username, u.balance, u.created_at, u.last_login_at, u.agent_id,
+                   u.is_banned,
+                   a.name AS agent_name,
+                   COALESCE(SUM(br.bet_total), 0) AS total_bet,
+                   COALESCE(SUM(br.net),       0) AS total_net
+            FROM users u
+            LEFT JOIN agents a ON a.id = u.agent_id
+            LEFT JOIN bet_records br ON br.user_id = u.id
+            WHERE ${where}
+            GROUP BY u.id
+            ORDER BY u.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+        `, params);
+        const [[{ total }]] = await db.execute(
+            `SELECT COUNT(*) AS total FROM users u WHERE ${where}`, params
+        );
+        res.json({ rows, total: Number(total), page, limit });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 玩家詳情 ──
+app.get('/api/admin/players/:id/detail', adminAuth, async (req, res) => {
+    try {
+        const [[user]] = await db.execute(`
+            SELECT u.id, u.username, u.balance, u.created_at, u.last_login_at, u.agent_id,
+                   u.is_banned,
+                   a.name AS agent_name,
+                   COALESCE(SUM(br.bet_total),  0) AS total_bet,
+                   COALESCE(SUM(br.win_amount), 0) AS total_win,
+                   COALESCE(SUM(br.net),        0) AS total_net,
+                   COUNT(br.id)                    AS bet_count
+            FROM users u
+            LEFT JOIN agents a ON a.id = u.agent_id
+            LEFT JOIN bet_records br ON br.user_id = u.id
+            WHERE u.id = ?
+            GROUP BY u.id
+        `, [req.params.id]);
+        if (!user) return res.status(404).json({ error: '玩家不存在' });
+
+        const [recentBets] = await db.execute(`
+            SELECT settled_at, bet_total, win_amount, net,
+                   banker_type, tian_win, di_win, xuan_win, huang_win,
+                   bet_tian, bet_di, bet_xuan, bet_huang
+            FROM bet_records WHERE user_id = ?
+            ORDER BY settled_at DESC LIMIT 10
+        `, [req.params.id]);
+
+        res.json({ user, recentBets });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 玩家搜尋（含代理資訊）──
+app.get('/api/admin/player-search', adminAuth, async (req, res) => {
+    const { q } = req.query;
+    if (!q?.trim()) return res.status(400).json({ error: '請輸入搜尋關鍵字' });
+    try {
+        const keyword = `%${q.trim()}%`;
+        const [rows] = await db.execute(`
+            SELECT u.id, u.username, u.balance, u.created_at, u.last_login_at, u.agent_id,
+                   a.name AS agent_name, a.referral_code AS agent_code,
+                   COALESCE(SUM(br.bet_total),  0) AS total_bet,
+                   COALESCE(SUM(br.net),        0) AS total_net
+            FROM users u
+            LEFT JOIN agents a ON a.id = u.agent_id
+            LEFT JOIN bet_records br ON br.user_id = u.id
+            WHERE u.username LIKE ?
+            GROUP BY u.id
+            ORDER BY u.created_at DESC
+            LIMIT 20
+        `, [keyword]);
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 指定玩家代理 ──
+app.patch('/api/admin/users/:id/agent', adminAuth, async (req, res) => {
+    const { agentId } = req.body;
+    try {
+        await db.execute('UPDATE users SET agent_id = ? WHERE id = ?', [agentId || null, req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 未綁定代理的玩家列表 ──
+app.get('/api/admin/unbound-players', adminAuth, async (req, res) => {
+    try {
+        const [rows] = await db.execute(`
+            SELECT id, username, balance, created_at, last_login_at
+            FROM users WHERE agent_id IS NULL
+            ORDER BY created_at DESC
+        `);
+        res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── 公告推播 ──
@@ -570,9 +823,245 @@ app.get('/api/admin/banker/history', adminAuth, async (req, res) => {
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── 代理管理 ──
+app.get('/api/admin/agents', adminAuth, async (req, res) => {
+    try { res.json(await AgentService.getAll()); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/agents', adminAuth, async (req, res) => {
+    try {
+        const id = await AgentService.create(req.body);
+        console.log(`🤝 [Admin] 新增代理: ${req.body.name} (${req.body.referral_code})`);
+        res.json({ success: true, id });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.put('/api/admin/agents/:id', adminAuth, async (req, res) => {
+    try {
+        await AgentService.update(req.params.id, req.body);
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/agents/:id', adminAuth, async (req, res) => {
+    try {
+        await AgentService.delete(req.params.id);
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/api/admin/agents/:id/players', adminAuth, async (req, res) => {
+    try { res.json(await AgentService.getPlayers(req.params.id)); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/agents/:id/settlement', adminAuth, async (req, res) => {
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: '請提供 from 與 to 日期' });
+    try { res.json(await AgentService.getSettlement(req.params.id, from, to)); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 開分紀錄 ──
+app.get('/api/admin/balance-logs', adminAuth, async (req, res) => {
+    const page   = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit) || 30));
+    const offset = (page - 1) * limit;
+    const { userId } = req.query;
+
+    let where = '1=1';
+    const params = [];
+    if (userId) { where += ' AND user_id = ?'; params.push(userId); }
+
+    try {
+        const [rows] = await db.execute(
+            `SELECT * FROM balance_logs WHERE ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+            params
+        );
+        const [[{ total }]] = await db.execute(
+            `SELECT COUNT(*) AS total FROM balance_logs WHERE ${where}`, params
+        );
+        res.json({ rows, total: Number(total), page, limit });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 玩家封鎖 / 解鎖 ──
+app.patch('/api/admin/players/:id/ban', adminAuth, async (req, res) => {
+    try {
+        await db.execute('UPDATE users SET is_banned = 1 WHERE id = ?', [req.params.id]);
+        // 強制踢除在線玩家
+        const [[u]] = await db.execute('SELECT id FROM users WHERE id = ?', [req.params.id]);
+        if (u) {
+            const sid = activeSessions.get(u.id);
+            if (sid) {
+                const s = io.sockets.sockets.get(sid);
+                if (s) {
+                    s.emit('force_logout', { message: '您的帳號已被停用，請聯繫客服' });
+                    setTimeout(() => s.disconnect(true), 200);
+                }
+            }
+        }
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 封鎖玩家 #${req.params.id}`);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/admin/players/:id/unban', adminAuth, async (req, res) => {
+    try {
+        await db.execute('UPDATE users SET is_banned = 0 WHERE id = ?', [req.params.id]);
+        // 解鎖時同步清除速率限制，讓玩家可以立即登入
+        const [[u]] = await db.execute('SELECT username FROM users WHERE id = ?', [req.params.id]);
+        if (u?.username) clearLoginRateLimit(u.username);
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 解鎖玩家 #${req.params.id}`);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 管理員帳號管理 ──
+app.get('/api/admin/admins', adminAuth, async (req, res) => {
+    try { res.json(await AdminUserService.getAll()); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/admins', adminAuth, async (req, res) => {
+    const { username, password } = req.body;
+    if (!username?.trim() || !password || password.length < 6)
+        return res.status(400).json({ error: '帳號不能為空，密碼至少 6 碼' });
+    try {
+        await AdminUserService.create(username.trim(), password);
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 新增管理員: ${username}`);
+        res.json({ success: true });
+    } catch (e) {
+        if (e.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: '此帳號已存在' });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put('/api/admin/admins/:id/password', adminAuth, async (req, res) => {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6)
+        return res.status(400).json({ error: '新密碼至少 6 碼' });
+    try {
+        await AdminUserService.changePassword(req.params.id, newPassword);
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 修改管理員 #${req.params.id} 密碼`);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/admins/:id', adminAuth, async (req, res) => {
+    try {
+        const all = await AdminUserService.getAll();
+        if (all.length <= 1) return res.status(422).json({ error: '至少需要保留一個管理員帳號' });
+        await AdminUserService.delete(req.params.id);
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 刪除管理員 #${req.params.id}`);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── 維護模式 ──
+app.get('/api/admin/maintenance', adminAuth, (req, res) => {
+    res.json({ isMaintenance });
+});
+
+app.post('/api/admin/maintenance', adminAuth, (req, res) => {
+    const { enabled } = req.body;
+    isMaintenance = !!enabled;
+    if (isMaintenance) {
+        io.emit('maintenance_mode', { enabled: true, message: '系統正在進行維護，請稍後再回來。' });
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 開啟維護模式`);
+    } else {
+        io.emit('maintenance_mode', { enabled: false });
+        console.log(`👨‍💻 [Admin:${req.adminUsername}] 關閉維護模式`);
+    }
+    res.json({ success: true, isMaintenance });
+});
+
+// ── 清除測試資料 ──
+app.delete('/api/admin/clear-data', adminAuth, async (req, res) => {
+    try {
+        await GameRoundService.clearAll();
+        await BetRecordService.clearAll();
+        console.log('🗑️ [Admin] 已清除所有牌局與投注紀錄');
+        res.json({ success: true, message: '已清除 game_rounds 及 bet_records' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // ==========================================
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`🚀 尊爵後端 (重構版) 運行中: http://localhost:${PORT}`);
+    try {
+        await AdminUserService.ensureTable();
+        await AdminUserService.seedDefaultAdmin('qwer16395', 'asdf16395');
+    } catch (e) {
+        console.error('管理員帳號初始化失敗:', e.message);
+    }
+    try {
+        await AgentService.ensureTable();
+        console.log('✅ [Agent] 代理資料表確認完成');
+    } catch (e) { console.error('代理資料表初始化失敗:', e.message); }
+    // balance_logs 資料表
+    try {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS balance_logs (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                user_id       INT          NOT NULL,
+                username      VARCHAR(64)  NOT NULL,
+                admin_username VARCHAR(64) NOT NULL,
+                amount        DECIMAL(12,2) NOT NULL,
+                balance_before DECIMAL(12,2) NOT NULL,
+                balance_after  DECIMAL(12,2) NOT NULL,
+                note          VARCHAR(255),
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_user_id (user_id),
+                INDEX idx_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
+        console.log('✅ [Balance] 開分紀錄資料表確認完成');
+    } catch (e) { console.error('balance_logs 初始化失敗:', e.message); }
+
+    // is_banned 欄位（相容 MySQL 5.7：先檢查 INFORMATION_SCHEMA 再 ALTER）
+    try {
+        const [[{ cnt }]] = await db.execute(`
+            SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'is_banned'
+        `);
+        if (Number(cnt) === 0) {
+            await db.execute(`ALTER TABLE users ADD COLUMN is_banned TINYINT(1) NOT NULL DEFAULT 0`);
+            console.log('✅ [Users] is_banned 欄位已新增');
+        } else {
+            console.log('✅ [Users] is_banned 欄位已存在');
+        }
+    } catch (e) { console.error('is_banned 欄位初始化失敗:', e.message); }
+
+    try {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS admin_refresh_tokens (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                username   VARCHAR(64)  NOT NULL,
+                token_hash CHAR(64)     NOT NULL,
+                ip         VARCHAR(45),
+                created_at DATETIME     NOT NULL,
+                expires_at DATETIME     NOT NULL,
+                INDEX idx_hash (token_hash),
+                INDEX idx_user (username)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS admin_login_logs (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                username     VARCHAR(64) NOT NULL,
+                ip           VARCHAR(45),
+                logged_in_at DATETIME    NOT NULL,
+                INDEX idx_user_time (username, logged_in_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
+        console.log('✅ [Admin] 安全資料表確認完成');
+    } catch (e) {
+        console.error('安全資料表初始化失敗:', e.message);
+    }
 });

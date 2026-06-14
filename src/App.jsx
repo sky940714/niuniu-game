@@ -10,6 +10,8 @@ function App() {
   const currentPage = useGameStore((state) => state.currentPage);
   const reLogin = useGameStore((state) => state.reLogin);
   const logout = useGameStore((state) => state.logout);
+  const exitRoom = useGameStore((state) => state.exitRoom);
+  const setMaintenanceMode = useGameStore((state) => state.setMaintenanceMode);
 
   // 初始連線 + 擱置分頁後重連
   useEffect(() => {
@@ -68,14 +70,41 @@ function App() {
       }
     };
 
+    // 強制登出（帳號封鎖專用事件）
+    const handleForceLogout = ({ message } = {}) => {
+      alert(message || '您已被強制登出，請聯繫客服');
+      logout();
+    };
+
+    // 維護模式切換
+    const handleMaintenanceMode = ({ enabled, message }) => {
+      setMaintenanceMode(enabled);
+      if (enabled) {
+        const page = useGameStore.getState().currentPage;
+        if (page === 'room') exitRoom();   // 強制退回大廳
+        if (message) alert(message);
+      }
+    };
+
+    // 連線後取得 init_state，同步維護模式狀態
+    const handleInitState = (data) => {
+      if (data.isMaintenance !== undefined) setMaintenanceMode(data.isMaintenance);
+    };
+
     socket.on('auth_success', handleAuthSuccess);
     socket.on('error_msg', handleErrorMsg);
+    socket.on('force_logout', handleForceLogout);
+    socket.on('maintenance_mode', handleMaintenanceMode);
+    socket.on('init_state', handleInitState);
 
     return () => {
       socket.off('auth_success', handleAuthSuccess);
       socket.off('error_msg', handleErrorMsg);
+      socket.off('force_logout', handleForceLogout);
+      socket.off('maintenance_mode', handleMaintenanceMode);
+      socket.off('init_state', handleInitState);
     };
-  }, [reLogin, logout]);
+  }, [reLogin, logout, exitRoom, setMaintenanceMode]);
 
   return (
     <>

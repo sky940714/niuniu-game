@@ -165,6 +165,9 @@ function calculateHand(cards) {
 // 5. 比牌邏輯 (回傳 true: 閒家贏, false: 莊家贏)
 // 規則：莊閒同牌型同點數同花色 -> 莊贏 (莊家優勢)
 function isPlayerWin(playerResult, bankerResult) {
+    // 莊閒皆無妞：莊家恆贏（不論牌面大小）
+    if (playerResult.type === 'NO_NIU' && bankerResult.type === 'NO_NIU') return false;
+
     // 1. 比牌型分數 (萬位數與千位數已經決定了牌型大小)
     // 舉例：五小妞(90000) > 牛牛(10013) > 牛9(9013) > 無牛(13)
     const pScore = Math.floor(playerResult.rankScore / 1000);
@@ -359,6 +362,26 @@ function generateRandomHand(excludedCards = []) {
 
 // ── 精確勝率控制輔助 ──────────────────────────────────────────────
 
+// 特殊牌型（牛牛以上）在受控出牌中降低出現頻率
+const SPECIAL_HAND_TYPES = new Set([
+    'NIU_NIU', 'SILVER_NIU', 'FIVE_KNIGHTS',
+    'STRAIGHT_FLUSH', 'FULL_HOUSE', 'BOMB', 'FIVE_SMALL'
+]);
+
+// 加權排列候選牌型：普通牌型優先（90%），特殊牌型低機率（10%）
+function _weightedShuffleTiers(candidates) {
+    const normals  = _shuffleArr(candidates.filter(c => !SPECIAL_HAND_TYPES.has(c.type)));
+    const specials = _shuffleArr(candidates.filter(c =>  SPECIAL_HAND_TYPES.has(c.type)));
+
+    if (normals.length > 0 && specials.length > 0) {
+        if (Math.random() < 0.10) {
+            return [specials[0], ...normals, ...specials.slice(1)];
+        }
+        return [...normals, ...specials];
+    }
+    return _shuffleArr([...candidates]);
+}
+
 // 牌型強度表（tier 越大越強）
 const HAND_TIERS = [
     { type: 'FIVE_SMALL',     tier: 90 },
@@ -396,7 +419,15 @@ function getResultTier(result) {
 // 生成「比 bankerResult 弱」的手牌（讓莊家贏）
 function generateWeakerHand(bankerResult, excludedCards, bannedTypes = new Set()) {
     const bankerTier = getResultTier(bankerResult);
-    const candidates = _shuffleArr(
+
+    // 莊家無牛時，無更弱牌型可選；直接生成另一手無牛給閒家
+    // 依據雙無牛規則（莊家恆贏），此做法仍讓莊家贏
+    if (bankerTier === 0) {
+        const hand = generateHandOfType('NO_NIU', excludedCards);
+        if (hand) return hand;
+    }
+
+    const candidates = _weightedShuffleTiers(
         HAND_TIERS.filter(h => h.tier < bankerTier && !bannedTypes.has(h.type))
     );
     for (const { type } of candidates) {
@@ -409,7 +440,7 @@ function generateWeakerHand(bankerResult, excludedCards, bannedTypes = new Set()
 // 生成「比 bankerResult 強」的手牌（讓玩家贏）
 function generateStrongerHand(bankerResult, excludedCards, bannedTypes = new Set()) {
     const bankerTier = getResultTier(bankerResult);
-    const candidates = _shuffleArr(
+    const candidates = _weightedShuffleTiers(
         HAND_TIERS.filter(h => h.tier > bankerTier && !bannedTypes.has(h.type))
     );
     for (const { type } of candidates) {

@@ -48,12 +48,13 @@ const getVipLevel = (balance) => {
 };
 
 const Lobby = () => {
-  const { user, setCurrentPage, logout, setUserBalance } = useGameStore();
+  const { user, setCurrentPage, logout, setUserBalance, isMaintenance } = useGameStore();
   const [activeCategory, setActiveCategory] = useState('全部');
   const [activeTab, setActiveTab]           = useState('lobby');
   const [focusedPromo, setFocusedPromo]     = useState(0);
   const [showBetHistory, setShowBetHistory] = useState(false);
   const [copyTip, setCopyTip]               = useState(false);
+  const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
 
   // ── 進入大廳時，透過 socket 同步最新餘額 ──────────────────────
   useEffect(() => {
@@ -71,7 +72,10 @@ const Lobby = () => {
     };
   }, [setUserBalance]);
 
-  const handleEnterGame = () => setCurrentPage('room');
+  const handleEnterGame = () => {
+    if (isMaintenance) { setShowMaintenanceModal(true); return; }
+    setCurrentPage('room');
+  };
 
   const handleCopyReferral = () => {
     const code = user?.referral_code;
@@ -88,6 +92,53 @@ const Lobby = () => {
   return (
     <>
       <AnnouncementToast />
+
+      {/* ── 維護模式彈窗 ── */}
+      {showMaintenanceModal && (
+        <div
+          onClick={() => setShowMaintenanceModal(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.78)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(145deg,#1a1a2e,#16213e)',
+              border: '1px solid rgba(251,191,36,0.35)',
+              borderRadius: 18,
+              padding: '40px 44px',
+              maxWidth: 360,
+              textAlign: 'center',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+            }}
+          >
+            <div style={{ fontSize: 56, marginBottom: 16 }}>🔧</div>
+            <div style={{ fontWeight: 800, fontSize: '1.3rem', color: '#fbbf24', marginBottom: 10 }}>
+              系統維護中
+            </div>
+            <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: '0.9rem', lineHeight: 1.7, marginBottom: 24 }}>
+              本平台目前正在進行系統維護<br />
+              暫時無法進入遊戲，請稍後再試<br />
+              造成不便敬請見諒
+            </div>
+            <button
+              onClick={() => setShowMaintenanceModal(false)}
+              style={{
+                background: 'linear-gradient(135deg,#d97706,#fbbf24)',
+                border: 'none', borderRadius: 10,
+                color: '#1a1a2e', fontWeight: 800,
+                padding: '10px 36px', fontSize: '0.95rem',
+                cursor: 'pointer',
+              }}
+            >
+              我知道了
+            </button>
+          </div>
+        </div>
+      )}
       <style>{`
         @keyframes lobbyMarquee {
           0%   { transform: translateX(0); }
@@ -176,7 +227,7 @@ const Lobby = () => {
             </div>
 
             {/* Deposit */}
-            <div style={S.depositBtn} onClick={() => alert('儲值系統建置中…')}>
+            <div style={S.depositBtn} onClick={() => window.open('https://line.me/R/ti/p/@601jrqxw', '_blank')}>
               ＋ 存款
             </div>
           </div>
@@ -296,7 +347,7 @@ const Lobby = () => {
                   style={{ ...S.acctRow, cursor: user?.referral_code ? 'pointer' : 'default' }}
                   onClick={handleCopyReferral}
                 >
-                  <span style={S.acctLabel}>推薦碼</span>
+                  <span style={S.acctLabel}>我的推薦碼</span>
                   <div style={S.acctRightGroup}>
                     <span style={S.acctValue}>{user?.referral_code || '—'}</span>
                     {user?.referral_code && (

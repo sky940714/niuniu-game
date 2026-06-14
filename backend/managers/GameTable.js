@@ -7,6 +7,7 @@ const UserService = require('../services/userService');
 const BetRecordService = require('../services/betRecordService');
 const GameRoundService = require('../services/gameRoundService');
 const JackpotService = require('../services/jackpotService');
+const GameSettingsService = require('../services/gameSettingsService');
 const botManager = require('./BotManager');
 
 const ZONE_LABEL = { tian: '天', di: '地', xuan: '玄', huang: '黃' };
@@ -64,7 +65,9 @@ class GameTable {
         // 啟動心跳循環
         this.startGameLoop();
         this._loadJackpot();
+        this._loadSettings();
         GameRoundService.ensureTable().catch(e => console.error('game_rounds 建表失敗:', e.message));
+        BetRecordService.ensureTable().catch(e => console.error('bet_records 建表失敗:', e.message));
 
         // 伺服器剛啟動的第一局，先發牌並讓機器人進場
         this.generateResult(); 
@@ -96,6 +99,21 @@ class GameTable {
         return { success: true, countdown: this.countdown };
     }
 
+    // ── 設定持久化：載入 ─────────────────────────────────────────
+    async _loadSettings() {
+        try {
+            await GameSettingsService.ensureTable();
+            const banned = await GameSettingsService.get('bannedHandTypes');
+            if (banned) {
+                const types = JSON.parse(banned);
+                this.bannedHandTypes = new Set(Array.isArray(types) ? types : []);
+                console.log(`⚙️ [Settings] 禁止牌型載入：[${[...this.bannedHandTypes].join(', ') || '無'}]`);
+            }
+        } catch (e) {
+            console.error('禁止牌型載入失敗:', e.message);
+        }
+    }
+
     // ── 彩金池初始化 ──────────────────────────────────────────────
     async _loadJackpot() {
         try {
@@ -117,6 +135,8 @@ class GameTable {
     setBannedTypes(types) {
         this.bannedHandTypes = new Set(Array.isArray(types) ? types : []);
         console.log(`⚙️ [Admin] 禁止牌型更新: [${[...this.bannedHandTypes].join(', ') || '無'}]`);
+        GameSettingsService.set('bannedHandTypes', JSON.stringify([...this.bannedHandTypes]))
+            .catch(e => console.error('禁止牌型儲存失敗:', e.message));
         return { success: true };
     }
 
@@ -186,41 +206,17 @@ class GameTable {
 
     generateResult() {
         try {
-            const isPeak      = this._isPeakHour();
-            // 莊家保底強度：離峰妞6(tier6)，熱門時段妞7(tier7)
-            // 閒家完全隨機，靠莊家保底強牌 + 5%手續費產生自然優勢
-            const bankerFloor = isPeak ? 7 : 6;
-            const timeTag     = isPeak ? '🔴熱門' : '🟢離峰';
-            this.lastWinRate  = isPeak ? 0.69 : 0.60; // 僅供紀錄用
-
             const excludedCards = [];
             const hands   = {};
             const results = {};
 
-            // ── 1. 莊家保底發牌（tier >= bankerFloor，最多嘗試 30 次）──
+            // ── 1. 莊家隨機發牌（禁牌除外）──
             let bankerHand = null;
-            for (let i = 0; i < 30; i++) {
+            for (let i = 0; i < 20; i++) {
                 const h = gameLogic.generateRandomHand(excludedCards);
                 if (!h) break;
-                const res     = gameLogic.calculateHand(h);
-                const tier    = gameLogic.getResultTier(res);
-                const typeKey = gameLogic.getHandTypeKey(res);
-                if (tier >= bankerFloor && !this.bannedHandTypes.has(typeKey)) {
-                    bankerHand = h;
-                    break;
-                }
-            }
-            // 保底失敗（極少數情況）→ 放寬條件只排除禁牌
-            if (!bankerHand) {
-                for (let i = 0; i < 10; i++) {
-                    const h = gameLogic.generateRandomHand(excludedCards);
-                    if (!h) break;
-                    const res = gameLogic.calculateHand(h);
-                    if (!this.bannedHandTypes.has(gameLogic.getHandTypeKey(res))) {
-                        bankerHand = h;
-                        break;
-                    }
-                }
+                const typeKey = gameLogic.getHandTypeKey(gameLogic.calculateHand(h));
+                if (!this.bannedHandTypes.has(typeKey)) { bankerHand = h; break; }
             }
             if (!bankerHand) bankerHand = gameLogic.createDeck().slice(0, 5);
 
@@ -228,26 +224,15 @@ class GameTable {
             excludedCards.push(...bankerHand);
             results.banker = gameLogic.calculateHand(bankerHand);
 
-            // ── 2. 閒家完全隨機（禁牌除外），靠莊家保底強牌產生自然優勢 ──
-            const failedReleases = 0;
-
+            // ── 2. 每門純隨機發牌（禁牌除外）──
             for (const zone of ['tian', 'di', 'xuan', 'huang']) {
                 let hand = null;
-
-                // 隨機發牌，排除禁牌，最多嘗試 15 次
-                for (let i = 0; i < 15; i++) {
+                for (let i = 0; i < 20; i++) {
                     const h = gameLogic.generateRandomHand(excludedCards);
                     if (!h) break;
-                    const res     = gameLogic.calculateHand(h);
-                    const typeKey = gameLogic.getHandTypeKey(res);
-                    if (!this.bannedHandTypes.has(typeKey)) {
-                        hand = h;
-                        break;
-                    }
+                    const typeKey = gameLogic.getHandTypeKey(gameLogic.calculateHand(h));
+                    if (!this.bannedHandTypes.has(typeKey)) { hand = h; break; }
                 }
-
-                // 最終 fallback
-                if (!hand) hand = gameLogic.generateRandomHand(excludedCards);
                 if (!hand) {
                     const remaining = gameLogic.createDeck().filter(
                         c => !excludedCards.some(e => e.suit === c.suit && e.rank === c.rank)
@@ -275,10 +260,10 @@ class GameTable {
             };
 
             this.roundResult = { hands, results, winners };
+            this.lastWinRate = 0;
 
             const bankerWinCount = Object.values(winners).filter(w => !w).length;
-            this.lastFailedReleases = failedReleases;
-            console.log(`🎯 [RNG] ${timeTag} | 保底tier${bankerFloor} | 莊家牌型:${results.banker.typeName} | 莊贏${bankerWinCount}/4門`);
+            console.log(`🎲 [RNG] 純隨機 | 莊家牌型:${results.banker.typeName} | 莊贏${bankerWinCount}/4門`);
 
         } catch (error) {
             console.error('發牌邏輯錯誤:', error);
@@ -360,7 +345,9 @@ class GameTable {
         // 真人莊家結算累計
         let bankerPays     = 0; // 莊家實際支出（獲利部分，不含玩家自身本金）
         let bankerReceives = 0; // 莊家實際收入（玩家輸掉的本金 + 追賠）
-        const hasBanker    = bankerManager.isActive();
+        const hasBanker       = bankerManager.isActive();
+        const bankerUserId    = hasBanker ? bankerManager.getBankerUserId() : null;
+        const bankerFrozenPre = hasBanker ? (bankerManager.activeSession?.currentFrozen ?? 0) : 0;
 
         for (const socket of sockets) {
             if (!socket.user) continue;
@@ -450,10 +437,58 @@ class GameTable {
             }
         }
 
+        // ── 機器人結算（真人上莊時計入莊家金流）──
+        if (hasBanker) {
+            for (const { bets } of botManager.getActiveBotBets()) {
+                for (const [zone, amount] of Object.entries(bets)) {
+                    if (amount <= 0) continue;
+                    if (w[zone]) {
+                        // 機器人贏：莊家付出獲利
+                        bankerPays += Math.floor(amount * r[zone].multiplier * 0.95);
+                    } else {
+                        // 機器人輸：莊家收入本金＋追賠
+                        bankerReceives += amount + Math.floor(amount * (r.banker.multiplier - 1));
+                    }
+                }
+            }
+        }
+
         // ── 真人莊家結算 ──
         if (hasBanker) {
             await bankerManager.settleRound(bankerPays, bankerReceives);
             betManager.bankerPerZoneCap = bankerManager.getPerZoneCap();
+
+            // 通知莊家本局淨損益，供前端局內紀錄顯示（不改變帳戶餘額）
+            const bankerSock = sockets.find(sk => sk.user?.db_id === bankerUserId);
+            if (bankerSock) {
+                bankerSock.emit('update_balance', {
+                    balance:   bankerSock.user.balance,
+                    netChange: bankerReceives - bankerPays,
+                    winAmount: bankerReceives,
+                });
+            }
+
+            // 將莊家本局盈虧寫入投注紀錄
+            try {
+                const bankerNet = bankerReceives - bankerPays;
+                await BetRecordService.insert({
+                    user_id:          bankerUserId,
+                    settled_at:       settledAt,
+                    bet_total:        0,
+                    win_amount:       bankerReceives,
+                    net:              bankerNet,
+                    balance_after:    Math.floor(bankerFrozenPre + bankerNet),
+                    banker_type:      r.banker.typeName,
+                    banker_cards:     r.banker.chineseHand?.join(' '),
+                    tian_type:        r.tian.typeName,  tian_win:  !w.tian,
+                    di_type:          r.di.typeName,    di_win:    !w.di,
+                    xuan_type:        r.xuan.typeName,  xuan_win:  !w.xuan,
+                    huang_type:       r.huang.typeName, huang_win: !w.huang,
+                    is_banker_record: 1,
+                });
+            } catch (err) {
+                console.error('⚠️ 寫入莊家投注紀錄失敗:', err.message);
+            }
         }
 
         // ── 彩金池觸發結算 ──
@@ -597,12 +632,12 @@ class GameTable {
         this.hadSwap  = false;
         this.hadForce = false;
         this.io.emit('bet_lock', { lock: false });
-        this.generateResult();
-        console.log("🆕 新局開始，牌局結果已預先生成");
         betManager.reset();
-        // 真人莊家：新局開始才接班或重算每門上限
+        // 先接班/重算莊家，再發牌，確保 generateResult() 取得正確的莊家狀態
         await bankerManager.onNewRound();
         betManager.bankerPerZoneCap = bankerManager.getPerZoneCap();
+        this.generateResult();
+        console.log("🆕 新局開始，牌局結果已預先生成");
         // 不在此處廣播 update_table_bets；前端在收到 phase_change(BETTING) 時已 setTableChips([]) 清空
         botManager.prepareBotsForRound();
         botManager.startBettingRoutine();

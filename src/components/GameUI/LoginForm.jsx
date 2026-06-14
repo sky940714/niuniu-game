@@ -109,7 +109,7 @@ const LoginForm = () => {
     const onRegister = (res) => {
       setLoading(false);
       if (res.success) {
-        setSuccessMsg('🎉 開戶成功！體驗金 $10,000 已撥入帳戶');
+        setSuccessMsg('🎉 開戶成功！請聯繫您的代理進行開分');
         setTimeout(() => {
           setIsRegistering(false);
           setSuccessMsg('');

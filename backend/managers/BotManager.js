@@ -4,9 +4,11 @@ const bankerManager = require('./BankerManager');
 
 class BotManager {
     constructor() {
-        this.io = null;       // 初始為空，等待 init 注入
-        this.gameTable = null; // 初始為空，等待 init 注入
+        this.io = null;
+        this.gameTable = null;
         this.activeBots = [];
+        this.botBets = {}; // 真人上莊時記錄機器人下注 { botId: { tian, di, xuan, huang } }
+        this.visualTotals = { tian: 0, di: 0, xuan: 0, huang: 0 }; // 每輪視覺籌碼累計，供重連還原
     }
 
     // 🔥 [關鍵修改] 這裡接收 io 和 gameTable
@@ -19,6 +21,8 @@ class BotManager {
     // 每局開始時，決定這局要派幾個機器人
     prepareBotsForRound() {
         this.activeBots = [];
+        this.botBets = {};
+        this.visualTotals = { tian: 0, di: 0, xuan: 0, huang: 0 };
         const botCount = Math.floor(Math.random() * 5) + 3; // 隨機 3~7 個機器人
 
         for (let i = 0; i < botCount; i++) {
@@ -53,12 +57,13 @@ class BotManager {
                 // 隨機選門 (0:天, 1:地, 2:玄, 3:黃)
                 const zoneId = Math.floor(Math.random() * 4);
                 
-                // 隨機金額，有真人莊家時不超過每門上限
+                // 真人上莊時用小籌碼，避免機器人注碼過大影響莊家
+                const hasBanker = bankerManager.isActive();
                 const perZoneCap = bankerManager.getPerZoneCap();
-                const allChips = [100, 500, 1000, 5000];
+                const baseChips = hasBanker ? [100, 500] : [100, 500, 1000, 5000];
                 const validChips = perZoneCap
-                    ? allChips.filter(c => c <= perZoneCap)
-                    : allChips;
+                    ? baseChips.filter(c => c <= perZoneCap)
+                    : baseChips;
                 const chipPool = validChips.length > 0 ? validChips : [100];
                 const amount = chipPool[Math.floor(Math.random() * chipPool.length)];
 
@@ -72,22 +77,39 @@ class BotManager {
     placeBotBet(bot, zoneId, amount) {
         const zoneKeys = ['tian', 'di', 'xuan', 'huang'];
         const zoneName = zoneKeys[zoneId];
+        const hasBanker = bankerManager.isActive();
 
-        // 🔥 這裡發送 Socket 事件，前端收到這個就會飛籌碼！
-        // 只要前端的 socket.on('update_table_bets', ...) 有寫好，畫面就會動
+        // 永遠累計視覺總量，供重連時還原籌碼顯示
+        this.visualTotals[zoneName] += amount;
+
+        // 真人上莊時：記錄機器人下注，供結算使用
+        if (hasBanker) {
+            if (!this.botBets[bot.id]) {
+                this.botBets[bot.id] = { tian: 0, di: 0, xuan: 0, huang: 0 };
+            }
+            this.botBets[bot.id][zoneName] += amount;
+        }
+
         if (this.io) {
             this.io.emit('update_table_bets', {
-                zoneId,       // 飛去哪一門
-                zoneName,     // 門的名字
-                amount,       // 決定籌碼圖片
-                totalAmount: 0, // 機器人下注不計入總額，避免誤導玩家
-                username: bot.username, // 顯示是誰下的
-                isBot: true   // 標記
+                zoneId,
+                zoneName,
+                amount,
+                totalAmount: hasBanker ? amount : 0,
+                username: bot.username,
+                isBot: true
             });
-            
-            // 除錯用，確認真的有發送
-            // console.log(`🤖 ${bot.username} 下注了 ${amount} 在 ${zoneName}`);
         }
+    }
+
+    // 取得所有機器人本局下注（供 GameTable.settleBets 使用）
+    getActiveBotBets() {
+        return Object.entries(this.botBets).map(([botId, bets]) => ({ botId, bets }));
+    }
+
+    // 取得本輪機器人視覺下注總量（供 init_state 重連還原籌碼）
+    getVisualTotals() {
+        return { ...this.visualTotals };
     }
 }
 

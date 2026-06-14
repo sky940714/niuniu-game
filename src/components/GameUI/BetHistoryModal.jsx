@@ -30,7 +30,45 @@ const BetHistoryModal = ({ history, onClose }) => {
                     <div style={s.empty}>尚無投注紀錄</div>
                 ) : (
                     <div style={s.list}>
-                        {[...history].reverse().map((entry, i) => (
+                        {[...history].reverse().map((entry, i) => entry.type === 'banker' ? (
+                            // ── 莊家結算列 ──
+                            <div key={i} style={{ ...s.row, borderLeft: '3px solid rgba(212,175,55,0.6)' }}>
+                                <div style={s.rowTop}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={s.bankerBadge}>👑 莊</span>
+                                        <span style={s.roundLabel}>第 {entry.round} 局</span>
+                                    </div>
+                                    <span style={{
+                                        ...s.netBadge,
+                                        color:      entry.net >= 0 ? '#4caf50' : '#ef5350',
+                                        borderColor: entry.net >= 0 ? '#4caf50' : '#ef5350',
+                                        background:  entry.net >= 0 ? 'rgba(76,175,80,0.1)' : 'rgba(239,83,80,0.1)',
+                                    }}>
+                                        {entry.net >= 0 ? '+' : ''}{entry.net.toLocaleString()}
+                                    </span>
+                                </div>
+                                <div style={s.zoneBets}>
+                                    {ZONE_KEYS.map((z, zi) => (
+                                        <span key={zi} style={{
+                                            ...s.zoneBet,
+                                            color:      entry.winZones?.[z] ? '#4caf50' : '#ef5350',
+                                            borderColor: entry.winZones?.[z] ? '#4caf50' : 'rgba(239,83,80,0.35)',
+                                            background:  entry.winZones?.[z] ? 'rgba(76,175,80,0.08)' : 'rgba(239,83,80,0.08)',
+                                        }}>
+                                            {ZONE_LABELS[zi]} {entry.winZones?.[z] ? '✓' : '✗'}
+                                        </span>
+                                    ))}
+                                </div>
+                                <div style={s.detail}>
+                                    <span style={s.detailItem}>{entry.bankerType || '莊家'}</span>
+                                    <span style={s.arrow}>→</span>
+                                    <span style={{ ...s.detailItem, color: entry.net >= 0 ? '#4caf50' : '#ef5350' }}>
+                                        {entry.net >= 0 ? '盈利' : '虧損'} ${Math.abs(entry.net).toLocaleString()}
+                                    </span>
+                                </div>
+                            </div>
+                        ) : (
+                            // ── 玩家投注列 ──
                             <div key={i} style={s.row}>
                                 <div style={s.rowTop}>
                                     <span style={s.roundLabel}>第 {entry.round} 局</span>
@@ -43,7 +81,6 @@ const BetHistoryModal = ({ history, onClose }) => {
                                         {entry.net >= 0 ? '+' : ''}{entry.net.toLocaleString()}
                                     </span>
                                 </div>
-
                                 <div style={s.zoneBets}>
                                     {ZONE_KEYS.map((z, zi) => entry.bets[z] > 0 && (
                                         <span key={zi} style={s.zoneBet}>
@@ -51,7 +88,6 @@ const BetHistoryModal = ({ history, onClose }) => {
                                         </span>
                                     ))}
                                 </div>
-
                                 <div style={s.detail}>
                                     <span style={s.detailItem}>下注 ${entry.betTotal.toLocaleString()}</span>
                                     <span style={s.arrow}>→</span>
@@ -106,6 +142,11 @@ const s = {
     },
     rowTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     roundLabel: { color: '#666', fontSize: '0.78rem' },
+    bankerBadge: {
+        background: 'rgba(212,175,55,0.15)', border: '1px solid rgba(212,175,55,0.5)',
+        borderRadius: '4px', padding: '1px 6px',
+        fontSize: '0.68rem', color: '#D4AF37', fontWeight: '700',
+    },
     netBadge: {
         padding: '2px 10px', borderRadius: '20px', border: '1px solid',
         fontSize: '0.9rem', fontWeight: 'bold',

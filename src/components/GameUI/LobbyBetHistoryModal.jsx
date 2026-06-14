@@ -6,26 +6,26 @@ const LIMIT    = 20;
 const ZONE_LABELS = { tian: '頭', di: '初', xuan: '川', huang: '尾' };
 const ZONES = ['tian', 'di', 'xuan', 'huang'];
 
-// ─── 可展開的單筆紀錄 ─────────────────────────────────────────
-const RecordRow = ({ r }) => {
-    const [open, setOpen] = useState(false);
-    const net   = r.net;
-    const bettedZones = ZONES.filter(z => r[`bet_${z}`] > 0);
+const formatDate = (raw) => {
+    const d = new Date(raw);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}/${dd} ${hh}:${mi}`;
+};
 
-    const dateStr = (() => {
-        const d = new Date(r.settled_at);
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mi = String(d.getMinutes()).padStart(2, '0');
-        return `${mm}/${dd} ${hh}:${mi}`;
-    })();
+// ─── 玩家投注列 ───────────────────────────────────────────────
+const PlayerRecordRow = ({ r }) => {
+    const [open, setOpen] = useState(false);
+    const net = r.net;
+    const bettedZones = ZONES.filter(z => r[`bet_${z}`] > 0);
 
     return (
         <div style={s.row} onClick={() => setOpen(o => !o)}>
             <div style={s.rowTop}>
                 <div style={s.rowLeft}>
-                    <span style={s.rowDate}>{dateStr}</span>
+                    <span style={s.rowDate}>{formatDate(r.settled_at)}</span>
                     <div style={s.zoneBets}>
                         {bettedZones.map(z => (
                             <span key={z} style={{
@@ -50,7 +50,6 @@ const RecordRow = ({ r }) => {
 
             {open && (
                 <div style={s.detail}>
-                    {/* 下注/獲得 */}
                     <div style={s.detailRow}>
                         <span style={s.detailLabel}>下注</span>
                         <span style={s.detailVal}>${r.bet_total.toLocaleString()}</span>
@@ -59,35 +58,101 @@ const RecordRow = ({ r }) => {
                             ${Math.abs(net).toLocaleString()}
                         </span>
                     </div>
-                    {/* 莊家 */}
                     <div style={s.detailRow}>
                         <span style={s.detailLabel}>莊家</span>
                         <span style={s.detailVal}>{r.banker_type}　{r.banker_cards}</span>
                     </div>
-                    {/* 各區 */}
                     {bettedZones.map(z => (
                         <div key={z} style={s.detailRow}>
                             <span style={s.detailLabel}>{ZONE_LABELS[z]}</span>
-                            <span style={{
-                                ...s.detailVal,
-                                color: r[`${z}_win`] ? '#4caf50' : '#ef5350',
-                            }}>
+                            <span style={{ ...s.detailVal, color: r[`${z}_win`] ? '#4caf50' : '#ef5350' }}>
                                 {r[`${z}_type`]}　{r[`${z}_cards`]}　{r[`${z}_win`] ? '✓ 贏' : '✗ 輸'}
                             </span>
                         </div>
                     ))}
-                    {/* 結算後餘額 */}
                     <div style={s.detailRow}>
                         <span style={s.detailLabel}>結算後餘額</span>
-                        <span style={s.detailVal}>
-                            ${parseFloat(r.balance_after).toLocaleString()}
-                        </span>
+                        <span style={s.detailVal}>${parseFloat(r.balance_after).toLocaleString()}</span>
                     </div>
                 </div>
             )}
         </div>
     );
 };
+
+// ─── 莊家結算列 ───────────────────────────────────────────────
+const BankerRecordRow = ({ r }) => {
+    const [open, setOpen] = useState(false);
+    const net = r.net;
+    // tian_win=1 在莊家紀錄裡代表「莊家贏了該門」
+    const bankerWonZones = ZONES.filter(z => r[`${z}_win`]);
+    const bankerLostZones = ZONES.filter(z => !r[`${z}_win`]);
+
+    return (
+        <div style={{ ...s.row, borderLeft: '3px solid rgba(212,175,55,0.6)' }} onClick={() => setOpen(o => !o)}>
+            <div style={s.rowTop}>
+                <div style={s.rowLeft}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={s.bankerBadge}>👑 莊</span>
+                        <span style={s.rowDate}>{formatDate(r.settled_at)}</span>
+                    </div>
+                    <div style={s.zoneBets}>
+                        {bankerWonZones.map(z => (
+                            <span key={z} style={{ ...s.zoneBet, color: '#4caf50', borderColor: '#4caf50' }}>
+                                {ZONE_LABELS[z]} ✓
+                            </span>
+                        ))}
+                        {bankerLostZones.map(z => (
+                            <span key={z} style={{ ...s.zoneBet, color: '#ef5350', borderColor: 'rgba(239,83,80,0.4)' }}>
+                                {ZONE_LABELS[z]} ✗
+                            </span>
+                        ))}
+                    </div>
+                </div>
+                <span style={{
+                    ...s.netBadge,
+                    color:      net >= 0 ? '#4caf50' : '#ef5350',
+                    borderColor: net >= 0 ? '#4caf50' : '#ef5350',
+                    background:  net >= 0 ? 'rgba(76,175,80,0.1)' : 'rgba(239,83,80,0.1)',
+                }}>
+                    {net >= 0 ? '+' : ''}{net.toLocaleString()}
+                </span>
+            </div>
+
+            {open && (
+                <div style={s.detail}>
+                    <div style={s.detailRow}>
+                        <span style={s.detailLabel}>莊家牌型</span>
+                        <span style={s.detailVal}>{r.banker_type}　{r.banker_cards}</span>
+                    </div>
+                    <div style={s.detailRow}>
+                        <span style={s.detailLabel}>{net >= 0 ? '本局盈利' : '本局虧損'}</span>
+                        <span style={{ ...s.detailVal, color: net >= 0 ? '#4caf50' : '#ef5350' }}>
+                            ${Math.abs(net).toLocaleString()}
+                        </span>
+                    </div>
+                    {ZONES.map(z => (
+                        <div key={z} style={s.detailRow}>
+                            <span style={s.detailLabel}>{ZONE_LABELS[z]}</span>
+                            <span style={{ ...s.detailVal, color: r[`${z}_win`] ? '#4caf50' : '#ef5350' }}>
+                                {r[`${z}_type`]}　{r[`${z}_win`] ? '✓ 莊贏' : '✗ 莊輸'}
+                            </span>
+                        </div>
+                    ))}
+                    <div style={s.detailRow}>
+                        <span style={s.detailLabel}>結算後餘額</span>
+                        <span style={s.detailVal}>${parseFloat(r.balance_after).toLocaleString()}</span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// ─── 統一分派 ─────────────────────────────────────────────────
+const RecordRow = ({ r }) => r.is_banker_record
+    ? <BankerRecordRow r={r} />
+    : <PlayerRecordRow r={r} />;
 
 // ─── 主元件 ──────────────────────────────────────────────────
 const LobbyBetHistoryModal = ({ onClose }) => {
@@ -224,6 +289,11 @@ const s = {
     },
     rowLeft: { display: 'flex', flexDirection: 'column', gap: '5px', flex: 1, minWidth: 0 },
     rowDate: { color: '#555', fontSize: '0.72rem' },
+    bankerBadge: {
+        background: 'rgba(212,175,55,0.15)', border: '1px solid rgba(212,175,55,0.5)',
+        borderRadius: '4px', padding: '1px 6px',
+        fontSize: '0.68rem', color: '#D4AF37', fontWeight: '700', flexShrink: 0,
+    },
     zoneBets: { display: 'flex', gap: '5px', flexWrap: 'wrap' },
     zoneBet: {
         border: '1px solid',

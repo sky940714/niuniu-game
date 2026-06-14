@@ -20,24 +20,23 @@ class UserService {
 
     // 📝 註冊新用戶
     static async register(username, password, referralCodeInput) {
-        // 1. 檢查是否有推薦人
-        let referrerId = null;
-        if (referralCodeInput) {
-            const [refRows] = await pool.execute('SELECT id FROM users WHERE referral_code = ?', [referralCodeInput]);
-            if (refRows.length > 0) referrerId = refRows[0].id;
-            else throw new Error("無效的推薦碼");
-        }
+        // 1. 推薦碼查代理表；未填則自動綁系統代理 NIU612
+        const AgentService = require('./agentService');
+        let agentId = null;
+        const codeToLookup = referralCodeInput ? referralCodeInput : 'NIU612';
+        const agent = await AgentService.findByReferralCode(codeToLookup);
+        if (referralCodeInput && !agent) throw new Error("無效的推薦碼");
+        if (agent) agentId = agent.id;
 
         // 2. 產生自己的推薦碼與密碼雜湊
         const myReferralCode = Math.random().toString(36).substring(2, 8).toUpperCase();
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 3. 寫入資料庫 (這裡假設你已經補上了 referral_code 等欄位)
-        // 如果你的資料庫還沒補欄位，請暫時移除 referral_code 相關的部分
+        // 3. 寫入資料庫
         try {
             await pool.execute(
-                'INSERT INTO users (username, password, referral_code, referrer_id, balance) VALUES (?, ?, ?, ?, ?)',
-                [username, hashedPassword, myReferralCode, referrerId, 10000] // 註冊送 10000
+                'INSERT INTO users (username, password, referral_code, agent_id, balance) VALUES (?, ?, ?, ?, ?)',
+                [username, hashedPassword, myReferralCode, agentId, 0]
             );
             return true;
         } catch (error) {
