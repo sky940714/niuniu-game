@@ -3,6 +3,7 @@ import useGameStore from '../stores/useGameStore';
 import LobbyBetHistoryModal from '../components/GameUI/LobbyBetHistoryModal';
 import AnnouncementToast from '../components/AnnouncementToast';
 import { socket } from '../socket';
+import { soundManager } from '../game/SoundManager';
 
 import bannerNiuniu from '../assets/buttons/banner_game_niuniu.png';
 import bgLobby from '../assets/bg/bg_lobby.png';
@@ -55,6 +56,28 @@ const Lobby = () => {
   const [showBetHistory, setShowBetHistory] = useState(false);
   const [copyTip, setCopyTip]               = useState(false);
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
+  const [showMarquee, setShowMarquee]                   = useState(false);
+
+  // ── 跑馬燈：每 2 小時顯示 90 秒，依時鐘對齊（全員同步）────────
+  useEffect(() => {
+    const CYCLE_MS   = 2 * 60 * 60 * 1000; // 2 小時
+    const SHOW_MS    = 90 * 1000;           // 顯示 90 秒
+
+    const check = () => {
+      const posInCycle = Date.now() % CYCLE_MS;
+      setShowMarquee(posInCycle < SHOW_MS);
+    };
+
+    check();
+    const timer = setInterval(check, 5000); // 每 5 秒重新判斷
+    return () => clearInterval(timer);
+  }, []);
+
+  // ── 大廳 BGM：爵士風，進入房間時自動停止 ────────────────────────
+  useEffect(() => {
+    soundManager.startLobbyBGM();
+    return () => soundManager.stopBGM();
+  }, []);
 
   // ── 進入大廳時，透過 socket 同步最新餘額 ──────────────────────
   useEffect(() => {
@@ -147,7 +170,7 @@ const Lobby = () => {
         .lobby-marquee-inner {
           display: inline-block;
           white-space: nowrap;
-          animation: lobbyMarquee 28s linear infinite;
+          animation: lobbyMarquee 50s linear infinite;
           color: rgba(255,255,255,0.75);
           font-size: 0.72rem;
         }
@@ -380,8 +403,15 @@ const Lobby = () => {
 
         </main>
 
-        {/* ── MARQUEE ─────────────────────────────────────────── */}
-        <div style={S.marqueeBar}>
+        {/* ── MARQUEE（每 2 小時顯示 90 秒）─────────────────────── */}
+        <div style={{
+          ...S.marqueeBar,
+          maxHeight:  showMarquee ? '27px' : '0px',
+          opacity:    showMarquee ? 1 : 0,
+          overflow:   'hidden',
+          transition: 'max-height 0.6s ease, opacity 0.6s ease',
+          pointerEvents: showMarquee ? 'auto' : 'none',
+        }}>
           <span style={S.marqueePrefix}>📢</span>
           <div style={S.marqueeTrack}>
             <span className="lobby-marquee-inner">
@@ -664,7 +694,7 @@ const S = {
 
   // Marquee
   marqueeBar: {
-    position: 'relative', zIndex: 10, flexShrink: 0, height: '27px',
+    position: 'relative', zIndex: 10, flexShrink: 0,
     display: 'flex', alignItems: 'center',
     paddingLeft: 'env(safe-area-inset-left)',
     paddingRight: 'env(safe-area-inset-right)',

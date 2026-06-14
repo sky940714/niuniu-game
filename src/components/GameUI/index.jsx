@@ -153,6 +153,9 @@ const GameUI = () => {
 
   // iAmBanker ref 供 socket 事件閉包讀最新值
   const iAmBankerRef = useRef(false);
+  // 追蹤本局下注門（供 gameApp.setPlayerContext 使用）
+  const currentBetsRef = useRef({ 0: 0, 1: 0, 2: 0, 3: 0 });
+  useEffect(() => { currentBetsRef.current = currentBets; }, [currentBets]);
 
   const totalCurrentBet = Object.values(currentBets).reduce((a, b) => a + b, 0);
   const maxAffordableBet = Math.floor((balance + totalCurrentBet) / MAX_ODDS) - totalCurrentBet;
@@ -200,11 +203,17 @@ const GameUI = () => {
         setCountdown(data.countdown);
 
         if (data.phase === PHASES.DEALING && data.roundResult) {
+            // 用 roundBetsRef（在 handleBetZone 同步更新，比 state 更可靠）
+            const bettedZones = ZONE_KEYS
+                .map((k, i) => (roundBetsRef.current[k] > 0 ? i : -1))
+                .filter(i => i >= 0);
+            gameApp.setPlayerContext(iAmBankerRef.current, bettedZones);
             gameApp.startRoundWithData(data.roundResult);
         }
 
         if (data.phase === PHASES.BETTING) {
             soundManager.newRound();
+            soundManager.placeBetAnnounce();
             setIsBetLocked(false);
             setShowMidRoundNotice(false);
             setWinZones([]);
@@ -487,6 +496,12 @@ const GameUI = () => {
     gameApp.onHistoryChange = (newHistory) => setHistory(newHistory);
   }, []);
 
+  // ── BGM：進入遊戲房啟動輕快流行，離房停止 ───────────────────────
+  useEffect(() => {
+    soundManager.startGameBGM();
+    return () => soundManager.stopBGM();
+  }, []);
+
   const handleApplyBanker = () => {
     const amount = parseInt(bankerFrozenInput.replace(/,/g, ''), 10);
     if (isNaN(amount)) return alert('請輸入有效金額');
@@ -743,7 +758,11 @@ const GameUI = () => {
                   <div style={styles.modalTitle}>設定</div>
 
                   {/* 音效切換 */}
-                  <div style={styles.settingRow} onClick={() => setSoundEnabled(soundManager.toggle())}>
+                  <div style={styles.settingRow} onClick={() => {
+                      const enabled = soundManager.toggle();
+                      setSoundEnabled(enabled);
+                      if (enabled) soundManager.resumeBGM('game');
+                  }}>
                       <span style={styles.settingLabel}>{soundEnabled ? '🔊' : '🔇'} 音效</span>
                       <div style={{...styles.toggleTrack, background: soundEnabled ? '#4caf50' : '#555'}}>
                           <div style={{...styles.toggleKnob, left: soundEnabled ? '22px' : '2px'}} />

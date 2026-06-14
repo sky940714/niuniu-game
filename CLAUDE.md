@@ -112,12 +112,41 @@ Key outbound (client → server):
 
 `gameApp` is a **singleton**. Initialized in `<GameCanvas>` on mount, destroyed on unmount.
 
-- **`app.js`** — `GameApp`: Pixi `Application` with three stage containers (`bgLayer`, `cardContainer`, `uiLayer`). Deals cards via GSAP animations, renders settlement text.
-- **`SqueezeController.js`** — Mesh-deform for 5th card. Pixi v8 `PlaneGeometry` (20×20 verts), drag threshold = 30% of visual card height to reveal.
-- **`Effects.js`** — `CoinRain`: 100 GSAP-animated `Graphics` circles on win.
+- **`app.js`** — `GameApp`: Pixi `Application` with three stage containers (`bgLayer`, `cardContainer`, `uiLayer`). Deals cards via GSAP animations, renders settlement text/effects.
+- **`SqueezeController.js`** — Ticker-based state machine for 5th card squeeze (咪牌). Uses plain `Sprite` (NOT Mesh) to eliminate blur. Upward swipe only; 75% height threshold OR flick velocity (`< -1.2 px/ms`) triggers auto-reveal. Spring physics on release (`k=0.13, damp=0.70`). Permission gate: only allows squeeze for zones where `playerBetZones[zoneIdx] === true`.
+- **`Effects.js`** — `CoinRain`: 100 GSAP-animated `Graphics` circles on win. `HighHandEffect`: plays PNG image + particle burst per zone for 7 special hand types; images loaded from `public/images/effects/`, positioned at zone card center, scale = `screen.width × 0.22 / 1024`, bounce-in + fade-out via GSAP.
+- **`SoundManager.js`** — `soundManager` singleton. BGM: HTML Audio with autoplay-retry (click/touchstart/keydown listeners on policy block), falls back to Web Audio synthesized loop if file missing. `placeBetAnnounce()`: plays `sfx_announce.mp3` buffer first, falls back to Web Speech API TTS (zh-TW female voice, pre-loaded via `_initVoice()`). SFX buffers loaded at init: `deal`, `flip`, `announce`.
 - **`logic.js`** (frontend) — `calculateNiu()`, `compareHands()`, `getCardValue()`. Used for frontend display only; authoritative results come from backend.
 
 Card asset naming: `card_{suit}_{rank}.png`, suit ∈ `{spades, hearts, diamonds, clubs}`, rank ∈ `{A, 02–09, 10, J, Q, K}`. Loaded via `import.meta.glob`.
+
+### Sound & Effect Assets (place manually in `public/`)
+
+```
+public/
+  sounds/
+    bgm_lobby.mp3       ← lobby background music (loops)
+    bgm_game.mp3        ← game room background music (loops)
+    sfx_deal.mp3        ← card deal sound
+    sfx_flip.mp3        ← card flip sound
+    sfx_announce.mp3    ← female voice "請下注" audio clip
+  images/effects/
+    effect_niuniu.png        ← 牛牛 (1024×1024 transparent PNG)
+    effect_wulong.png        ← 五龍妞
+    effect_yinhua.png        ← 銀花妞
+    effect_tonghuashun.png   ← 同花順妞
+    effect_hulu.png          ← 葫蘆妞
+    effect_tiezhi.png        ← 鐵支妞
+    effect_wuxiao.png        ← 五小妞
+```
+
+All audio files are optional — fallback to Web Audio synthesized sound when missing. Effect PNGs are optional — `HighHandEffect.play()` silently skips if asset not loaded.
+
+### Settlement Display Logic (`app.js` → `settleAll()`)
+
+Special hands → `HighHandEffect` image at zone card center (staggered delay += 0.35s per zone). Non-special hands (牛1–牛9, 無牛) → Pixi `Text` label at zone position.
+
+Hand type strings from backend: `FIVE_SMALL`, `BOMB`, `FULL_HOUSE`, `STRAIGHT_FLUSH`, `FIVE_KNIGHTS`, `SILVER_NIU`, `NIU_NIU`. Non-special: `NIU_1`–`NIU_7`, `NO_NIU`.
 
 ### Hand Types & Multipliers (`backend/logic.js`)
 
