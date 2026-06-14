@@ -537,7 +537,7 @@ class GameTable {
         const totalBetAllPlayers = Object.values(betManager.tableBets).reduce((s, v) => s + v, 0);
         const houseProfitCalc    = Object.keys(w).reduce((sum, zone) => {
             const bet = betManager.tableBets[zone] || 0;
-            if (!w[zone]) return sum + bet;
+            if (!w[zone]) return sum + Math.floor(bet * (r.banker.multiplier || 1));
             return sum - Math.floor(bet * (r[zone]?.multiplier || 1) * 0.95);
         }, 0);
         try {
