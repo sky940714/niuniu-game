@@ -21,6 +21,7 @@ const AdminUserService = require('./services/adminUserService');
 const AgentService = require('./services/agentService');
 const botManager = require('./managers/BotManager');
 const { JACKPOT } = require('./config/gameRules');
+const ErrorLogService = require('./services/errorLogService');
 
 const app = express();
 app.use(express.json());
@@ -992,6 +993,38 @@ app.delete('/api/admin/clear-data', adminAuth, async (req, res) => {
     }
 });
 
+// ── 前端錯誤回報（公開，限速：每 IP 每分鐘 20 筆）──────────────
+const clientErrRateMap = new Map();
+app.post('/api/log/client-error', async (req, res) => {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const entry = clientErrRateMap.get(ip) || { count: 0, reset: now + 60_000 };
+    if (now > entry.reset) { entry.count = 0; entry.reset = now + 60_000; }
+    entry.count++;
+    clientErrRateMap.set(ip, entry);
+    if (entry.count > 20) return res.status(429).json({ error: 'rate limit' });
+
+    const { level = 'error', message, stack, context, userAgent } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    await ErrorLogService.insert({ source: 'frontend', level, message, stack, context, user_agent: userAgent, ip });
+    res.json({ ok: true });
+});
+
+// ── 後台查詢錯誤日誌 ──────────────────────────────────────────
+app.get('/api/admin/error-logs', adminAuth, async (req, res) => {
+    try {
+        const { level, source, limit = 50, offset = 0 } = req.query;
+        const [rows, total] = await Promise.all([
+            ErrorLogService.getList({ level, source, limit, offset }),
+            ErrorLogService.getCount({ level, source }),
+        ]);
+        res.json({ rows, total });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // ==========================================
 
 const PORT = process.env.PORT || 3001;
@@ -1007,6 +1040,10 @@ server.listen(PORT, async () => {
         await AgentService.ensureTable();
         console.log('✅ [Agent] 代理資料表確認完成');
     } catch (e) { console.error('代理資料表初始化失敗:', e.message); }
+    try {
+        await ErrorLogService.ensureTable();
+        console.log('✅ [ErrorLog] 錯誤日誌資料表確認完成');
+    } catch (e) { console.error('錯誤日誌資料表初始化失敗:', e.message); }
     // balance_logs 資料表
     try {
         await db.execute(`

@@ -9,6 +9,7 @@ const GameRoundService = require('../services/gameRoundService');
 const JackpotService = require('../services/jackpotService');
 const GameSettingsService = require('../services/gameSettingsService');
 const botManager = require('./BotManager');
+const alertService = require('../services/alertService');
 
 const ZONE_LABEL = { tian: '天', di: '地', xuan: '玄', huang: '黃' };
 const TYPE_NAME  = {
@@ -362,6 +363,19 @@ class GameTable {
     }
 
     async settleBets() {
+        try {
+            await this._doSettleBets();
+        } catch (err) {
+            console.error('🚨 [settleBets] 結算失敗:', err);
+            await alertService.critical('結算失敗 (settleBets)', {
+                error:   err.message,
+                phase:   this.phase,
+                banker:  this.roundResult?.results?.banker?.typeName || 'N/A',
+            });
+        }
+    }
+
+    async _doSettleBets() {
         const sockets = await this.io.fetchSockets();
         const settledAt = new Date();
         const r = this.roundResult.results;
@@ -546,7 +560,7 @@ class GameTable {
         } catch (err) {
             console.error('⚠️ 寫入牌局紀錄失敗:', err.message);
         }
-    }
+    } // end _doSettleBets
 
     async _settleJackpot(sockets) {
         try {

@@ -389,6 +389,7 @@ const TABS = [
   { id:'banker',   label:'👑 莊家管理' },
   { id:'agents',   label:'🤝 代理管理' },
   { id:'sysadmin', label:'🔐 系統管理' },
+  { id:'errors',   label:'🐛 錯誤日誌' },
 ];
 
 // ─── Main ────────────────────────────────────────────────────────
@@ -971,6 +972,31 @@ function App() {
   useEffect(() => { if (activeTab === 'agents') fetchAgents(); }, [activeTab, fetchAgents]);
 
   useEffect(() => { if (activeTab === 'sysadmin') { fetchMaintenance(); fetchAdminAccounts(); } }, [activeTab]); // eslint-disable-line
+
+  // ── 錯誤日誌 ──
+  const [errorLogs,      setErrorLogs]      = useState([]);
+  const [errorLogsTotal, setErrorLogsTotal] = useState(0);
+  const [errorLogsPage,  setErrorLogsPage]  = useState(1);
+  const [errorFilter,    setErrorFilter]    = useState({ level: 'all', source: 'all' });
+  const [expandedErrId,  setExpandedErrId]  = useState(null);
+  const ERROR_PAGE_SIZE = 30;
+
+  const fetchErrorLogs = useCallback(async (page = 1, filter = errorFilter) => {
+    try {
+      const offset = (page - 1) * ERROR_PAGE_SIZE;
+      const params = new URLSearchParams({ limit: ERROR_PAGE_SIZE, offset });
+      if (filter.level  !== 'all') params.set('level',  filter.level);
+      if (filter.source !== 'all') params.set('source', filter.source);
+      const r = await axios.get(`${API_URL}/error-logs?${params}`, H);
+      setErrorLogs(r.data.rows || []);
+      setErrorLogsTotal(r.data.total || 0);
+      setErrorLogsPage(page);
+    } catch {}
+  }, [errorFilter]); // eslint-disable-line
+
+  useEffect(() => {
+    if (activeTab === 'errors') fetchErrorLogs(1, errorFilter);
+  }, [activeTab]); // eslint-disable-line
 
   const fetchAgentPlayers = async (agentId) => {
     try {
@@ -2289,6 +2315,119 @@ function App() {
           </div>
         )}
 
+        {/* ── 錯誤日誌 ── */}
+        {activeTab === 'errors' && (
+          <div className="section-box">
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:10, marginBottom:16 }}>
+              <h2 style={{ margin:0 }}>🐛 錯誤日誌</h2>
+              <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                <select value={errorFilter.level} onChange={e => {
+                    const f = { ...errorFilter, level: e.target.value };
+                    setErrorFilter(f); fetchErrorLogs(1, f);
+                  }} style={errSel}>
+                  <option value="all">全部等級</option>
+                  <option value="error">🔴 error</option>
+                  <option value="warn">🟡 warn</option>
+                </select>
+                <select value={errorFilter.source} onChange={e => {
+                    const f = { ...errorFilter, source: e.target.value };
+                    setErrorFilter(f); fetchErrorLogs(1, f);
+                  }} style={errSel}>
+                  <option value="all">全部來源</option>
+                  <option value="frontend">前端</option>
+                  <option value="backend">後端</option>
+                </select>
+                <button onClick={() => fetchErrorLogs(errorLogsPage, errorFilter)}
+                  style={{ padding:'6px 16px', borderRadius:6, border:'1px solid #334155', background:'#1e293b', color:'#94a3b8', cursor:'pointer', fontSize:'0.85rem' }}>
+                  重新整理
+                </button>
+              </div>
+            </div>
+
+            <div style={{ color:'#64748b', fontSize:'0.82rem', marginBottom:10 }}>
+              共 {errorLogsTotal} 筆，顯示第 {(errorLogsPage-1)*ERROR_PAGE_SIZE+1}–{Math.min(errorLogsPage*ERROR_PAGE_SIZE, errorLogsTotal)} 筆
+            </div>
+
+            {errorLogs.length === 0 ? (
+              <div style={{ textAlign:'center', color:'#475569', padding:'40px 0', fontSize:'0.95rem' }}>目前沒有錯誤記錄 ✨</div>
+            ) : (
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {errorLogs.map(log => {
+                  const isErr = log.level === 'error';
+                  const expanded = expandedErrId === log.id;
+                  let ctx = null;
+                  try { ctx = log.context ? JSON.parse(log.context) : null; } catch {}
+                  return (
+                    <div key={log.id} style={{
+                      background: isErr ? 'rgba(239,68,68,0.06)' : 'rgba(234,179,8,0.06)',
+                      border: `1px solid ${isErr ? 'rgba(239,68,68,0.25)' : 'rgba(234,179,8,0.25)'}`,
+                      borderRadius:8, padding:'10px 14px', cursor:'pointer',
+                    }} onClick={() => setExpandedErrId(expanded ? null : log.id)}>
+                      <div style={{ display:'flex', gap:8, alignItems:'flex-start', flexWrap:'wrap' }}>
+                        <span style={{
+                          flexShrink:0, fontSize:'0.72rem', fontWeight:700, padding:'2px 8px', borderRadius:20,
+                          background: isErr ? 'rgba(239,68,68,0.2)' : 'rgba(234,179,8,0.2)',
+                          color: isErr ? '#f87171' : '#fbbf24',
+                        }}>{isErr ? '● ERROR' : '● WARN'}</span>
+                        <span style={{ flexShrink:0, fontSize:'0.72rem', padding:'2px 8px', borderRadius:20, background:'rgba(99,102,241,0.15)', color:'#a5b4fc' }}>
+                          {log.source === 'frontend' ? '前端' : '後端'}
+                        </span>
+                        {log.username && (
+                          <span style={{ flexShrink:0, fontSize:'0.72rem', padding:'2px 8px', borderRadius:20, background:'rgba(16,185,129,0.12)', color:'#6ee7b7' }}>
+                            👤 {log.username}
+                          </span>
+                        )}
+                        <span style={{ flex:1, color:'#cbd5e1', fontSize:'0.88rem', wordBreak:'break-word' }}>{log.message}</span>
+                        <span style={{ flexShrink:0, color:'#475569', fontSize:'0.75rem', whiteSpace:'nowrap' }}>
+                          {new Date(log.created_at).toLocaleString('zh-TW')}
+                        </span>
+                      </div>
+
+                      {expanded && (
+                        <div style={{ marginTop:10, display:'flex', flexDirection:'column', gap:6 }}>
+                          {ctx && (
+                            <div style={{ background:'rgba(0,0,0,0.3)', borderRadius:6, padding:'8px 12px', fontSize:'0.8rem', color:'#94a3b8' }}>
+                              <b style={{ color:'#64748b' }}>Context：</b>
+                              <pre style={{ margin:0, whiteSpace:'pre-wrap', wordBreak:'break-all' }}>{JSON.stringify(ctx, null, 2)}</pre>
+                            </div>
+                          )}
+                          {log.stack && (
+                            <div style={{ background:'rgba(0,0,0,0.4)', borderRadius:6, padding:'8px 12px' }}>
+                              <div style={{ color:'#64748b', fontSize:'0.75rem', marginBottom:4 }}>Stack Trace：</div>
+                              <pre style={{ margin:0, fontSize:'0.75rem', color:'#f87171', whiteSpace:'pre-wrap', wordBreak:'break-all', maxHeight:200, overflowY:'auto' }}>{log.stack}</pre>
+                            </div>
+                          )}
+                          {log.user_agent && (
+                            <div style={{ color:'#475569', fontSize:'0.72rem' }}>UA：{log.user_agent}</div>
+                          )}
+                          {log.ip && (
+                            <div style={{ color:'#475569', fontSize:'0.72rem' }}>IP：{log.ip}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 分頁 */}
+            {errorLogsTotal > ERROR_PAGE_SIZE && (
+              <div style={{ display:'flex', gap:8, justifyContent:'center', marginTop:16 }}>
+                <button disabled={errorLogsPage <= 1}
+                  onClick={() => fetchErrorLogs(errorLogsPage - 1, errorFilter)}
+                  style={{ ...errPageBtn, opacity: errorLogsPage <= 1 ? 0.4 : 1 }}>◀ 上一頁</button>
+                <span style={{ color:'#64748b', lineHeight:'32px', fontSize:'0.85rem' }}>
+                  {errorLogsPage} / {Math.ceil(errorLogsTotal / ERROR_PAGE_SIZE)}
+                </span>
+                <button disabled={errorLogsPage >= Math.ceil(errorLogsTotal / ERROR_PAGE_SIZE)}
+                  onClick={() => fetchErrorLogs(errorLogsPage + 1, errorFilter)}
+                  style={{ ...errPageBtn, opacity: errorLogsPage >= Math.ceil(errorLogsTotal / ERROR_PAGE_SIZE) ? 0.4 : 1 }}>下一頁 ▶</button>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
 
       <footer className="admin-footer">
@@ -2297,5 +2436,14 @@ function App() {
     </div>
   );
 }
+
+const errSel = {
+  padding:'6px 10px', borderRadius:6, border:'1px solid #334155',
+  background:'#1e293b', color:'#cbd5e1', fontSize:'0.85rem', cursor:'pointer',
+};
+const errPageBtn = {
+  padding:'6px 16px', borderRadius:6, border:'1px solid #334155',
+  background:'#1e293b', color:'#94a3b8', cursor:'pointer', fontSize:'0.85rem',
+};
 
 export default App;

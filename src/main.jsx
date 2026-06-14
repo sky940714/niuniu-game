@@ -10,6 +10,9 @@ import './styles/main.scss'
 // 👇 新增這一行：引入 socket 設定檔，啟動連線！
 import './socket';
 
+import { initErrorReporter } from './utils/errorReporter';
+initErrorReporter();
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   // 開發遊戲時建議先註解掉 StrictMode，避免 Pixi 重複初始化
   // <React.StrictMode>
