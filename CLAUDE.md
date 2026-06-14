@@ -52,6 +52,8 @@ backend/
   services/
     userService.js      # DB queries: findById, findByUsername, register, updateBalance
     adminUserService.js # Admin account CRUD: getAll, create, changePassword, delete
+    alertService.js     # Telegram critical alert (60s cooldown) + DB warn logging
+    errorLogService.js  # DB table error_logs: insert, getList, getCount
   utils/db.js           # MySQL2 connection pool
 ```
 
@@ -187,11 +189,16 @@ Hand type strings from backend: `FIVE_SMALL`, `BOMB`, `FULL_HOUSE`, `STRAIGHT_FL
 - **玩家管理** — 搜尋/列出玩家，點擊查看詳情（餘額、開分紀錄、封鎖狀態）
 - **開分紀錄** — `balance_logs` 資料表，記錄每次手動調整（操作者、前後餘額、備注）
 - **牌局紀錄** — 歷史牌局查詢
+- **🐛 錯誤日誌** — 查詢 `error_logs` 資料表，含等級/來源過濾、分頁、展開堆疊追蹤
 - **🔐 系統管理** — 維護模式開關 + 管理員帳號 CRUD
 
 #### Admin 登入
 - `POST /api/admin/login` — `{ username, password }` → 返回 JWT（audience: 'admin'）
 - Admin panel 將 JWT 存在 `localStorage.admin_token`，每次 API 呼叫帶 `Authorization: Bearer <token>`
+
+#### 錯誤日誌端點
+- `POST /api/log/client-error` — 公開端點，IP 限流 20次/分；body: `{ level, message, stack, context, userAgent }`
+- `GET /api/admin/error-logs?level=&source=&limit=30&offset=0` — 管理員查詢（adminAuth 保護）
 
 #### 手牌換位（原功能）
 Polls `GET /api/admin/preview` every 1 second. Two-click swap: click zone A → click zone B → confirm → `POST /api/admin/swap-hand { pos1, pos2 }`. Zones: `banker | tian | di | xuan | huang`.
@@ -202,6 +209,7 @@ Polls `GET /api/admin/preview` every 1 second. Two-click swap: click zone A → 
 - `balance_logs` — 開分紀錄：`user_id, username, admin_username, amount, balance_before, balance_after, note, created_at`
 - `admins` — 管理員帳號：`id, username, password_hash, created_at`
 - `game_rounds` / `round_bets` — 牌局紀錄（由 GameTable 寫入）
+- `error_logs` — 前端/後端錯誤日誌：`id, source, level, message, stack, user_id, username, context, user_agent, ip, created_at`
 
 **MySQL 5.7 compatibility**: `ALTER TABLE ADD COLUMN IF NOT EXISTS` is NOT supported. Use INFORMATION_SCHEMA check before adding columns.
 
@@ -214,7 +222,9 @@ DB_USER=root
 DB_PASS=...
 DB_NAME=prestige_niu_niu
 JWT_SECRET=...
-ADMIN_SECRET=...     # Fallback for admin API access (legacy x-admin-secret header)
+ADMIN_SECRET=...          # Fallback for admin API access (legacy x-admin-secret header)
+TELEGRAM_BOT_TOKEN=...    # Optional: Telegram bot token for critical alerts
+TELEGRAM_CHAT_ID=...      # Optional: Telegram chat/channel ID to receive alerts
 ```
 
 ## Backend URL
