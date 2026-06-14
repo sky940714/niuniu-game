@@ -231,6 +231,10 @@ const GameUI = () => {
         }
 
         if (data.phase === PHASES.RESULT && data.roundResult) {
+            // RESULT 時 server 發送完整莊家牌給所有人；非莊家玩家此前沒有此資料，補充進去
+            if (data.roundResult.hands?.banker) {
+                gameApp.updateBankerHand(data.roundResult.hands.banker);
+            }
             const { winners, results } = data.roundResult;
             const winZoneIds = [];
             if (winners.tian)  winZoneIds.push(0);

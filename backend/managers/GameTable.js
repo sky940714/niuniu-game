@@ -189,7 +189,7 @@ class GameTable {
             case PHASES.SQUEEZING:
                 this.phase = PHASES.RESULT;
                 this.countdown = TIMING.RESULT_DURATION;
-                await this.settleBets(); 
+                await this.settleBets();
                 break;
 
             case PHASES.RESULT:
@@ -197,11 +197,36 @@ class GameTable {
                 break;
         }
 
-        this.io.emit('phase_change', {
-            phase: this.phase,
-            countdown: this.countdown,
-            roundResult: this.roundResult 
-        });
+        // 有真人莊家時：分流發送，只有莊家本人才能收到莊家手牌
+        const bankerUserId = bankerManager.getBankerUserId();
+        if (bankerUserId) {
+            const sockets = await this.io.fetchSockets();
+            for (const sock of sockets) {
+                const isThisBanker = sock.user?.db_id === bankerUserId;
+                sock.emit('phase_change', {
+                    phase:       this.phase,
+                    countdown:   this.countdown,
+                    roundResult: this._buildPayload(this.phase, isThisBanker),
+                });
+            }
+        } else {
+            // 無真人莊家 → 直接廣播完整資料
+            this.io.emit('phase_change', {
+                phase:       this.phase,
+                countdown:   this.countdown,
+                roundResult: this.roundResult,
+            });
+        }
+    }
+
+    // 依階段與身份決定要傳送的 roundResult 內容
+    _buildPayload(phase, isBanker) {
+        if (!this.roundResult) return null;
+        // RESULT 階段全公開（翻牌給所有人看），或本人就是莊家
+        if (phase === PHASES.RESULT || isBanker) return this.roundResult;
+        // 其他階段對非莊家：隱藏莊家手牌，保留 results / winners
+        const { hands, results, winners } = this.roundResult;
+        return { results, winners, hands: { ...hands, banker: null } };
     }
 
     generateResult() {

@@ -306,9 +306,12 @@ io.on('connection', (socket) => {
         socket.emit('cancel_apply_result', result);
     });
 
-    // 8. 玩家主動下莊
+    // 8. 玩家主動下莊（限 BETTING 階段）
     socket.on('quit_banker', async () => {
         if (!socket.user) return socket.emit('error_msg', '請先登入');
+        if (gameTable.phase !== 'BETTING') {
+            return socket.emit('quit_banker_result', { success: false, msg: '僅可在下注階段申請下莊' });
+        }
         const result = await bankerManager.playerQuit(socket.user.db_id);
         socket.emit('quit_banker_result', result);
     });

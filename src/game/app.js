@@ -167,7 +167,8 @@ class GameApp {
         const formatCard = (c) => `card_${suitMap[c.suit]}_${rankMap[c.rank]}`;
 
         this.targetHands = {
-            banker: serverResult.hands.banker.map(formatCard),
+            // 非莊家玩家在 DEALING 時收到 banker: null，RESULT 時由 updateBankerHand 補充
+            banker: serverResult.hands.banker ? serverResult.hands.banker.map(formatCard) : null,
             tian:   serverResult.hands.tian.map(formatCard),
             di:     serverResult.hands.di.map(formatCard),
             xuan:   serverResult.hands.xuan.map(formatCard),
@@ -185,7 +186,8 @@ class GameApp {
         }
         this.app.canvas.style.pointerEvents = 'auto';
 
-        const bankerHand = this.targetHands.banker.map(t => ({ texture: t }));
+        // 非莊家玩家的 banker hand 為 null（牌背發牌即可，RESULT 再補充）
+        const bankerHand = (this.targetHands.banker ?? Array(5).fill(null)).map(t => ({ texture: t }));
         const playersHands = [
             this.targetHands.tian.map(t => ({ texture: t })),
             this.targetHands.di.map(t => ({ texture: t })),
@@ -266,7 +268,8 @@ class GameApp {
                     },
                     onComplete: () => {
                         if (isBanker && !isFifthCard) {
-                            // 莊家前4張：維持牌背（不翻）
+                            // 莊家前4張：只有自己是莊家才翻面，其他人維持牌背
+                            if (this.iAmBanker) this.flipCard(card, bankerHand[round].texture);
                         } else if (isBanker && isFifthCard && this.iAmBanker) {
                             // 莊家第5張：若本玩家是莊家，可瞇牌
                             card.eventMode = 'static';
@@ -362,7 +365,14 @@ class GameApp {
     }
 
     async openBankerAndSettle(gen) {
-        const bankerCards = this.targetHands.banker;
+        const bankerCards = this.targetHands?.banker;
+        if (!bankerCards) {
+            // 理論上不應發生（RESULT 前應已呼叫 updateBankerHand），防守用
+            this._settleTimer2 = setTimeout(() => {
+                if (this._settleGeneration === gen) this.settleAll();
+            }, 600);
+            return;
+        }
         for(let i=0; i<5; i++) {
             await new Promise(r => setTimeout(r, 150));
             if (this._settleGeneration !== gen) return;
@@ -373,6 +383,14 @@ class GameApp {
         this._settleTimer2 = setTimeout(() => {
             if (this._settleGeneration === gen) this.settleAll();
         }, 600);
+    }
+
+    // RESULT 階段由 GameUI 呼叫，補充非莊家玩家的莊家牌資料
+    updateBankerHand(bankerCards) {
+        if (!bankerCards || !this.targetHands) return;
+        const suitMap = { 's': 'spades', 'h': 'hearts', 'd': 'diamonds', 'c': 'clubs' };
+        const rankMap = { 1:'A', 2:'02', 3:'03', 4:'04', 5:'05', 6:'06', 7:'07', 8:'08', 9:'09', 10:'10', 11:'J', 12:'Q', 13:'K' };
+        this.targetHands.banker = bankerCards.map(c => `card_${suitMap[c.suit]}_${rankMap[c.rank]}`);
     }
 
     async settleAll() {
