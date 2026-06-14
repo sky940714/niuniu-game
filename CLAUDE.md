@@ -148,6 +148,24 @@ Special hands → `HighHandEffect` image at zone card center (staggered delay +=
 
 Hand type strings from backend: `FIVE_SMALL`, `BOMB`, `FULL_HOUSE`, `STRAIGHT_FLUSH`, `FIVE_KNIGHTS`, `SILVER_NIU`, `NIU_NIU`. Non-special: `NIU_1`–`NIU_7`, `NO_NIU`.
 
+### 莊家咪牌機制
+
+**後端資料分流** (`GameTable._buildPayload`):
+- 有真人莊家時，`nextPhase()` 改為 `fetchSockets()` 逐一 emit（而非 `io.emit` 廣播）
+- RESULT 階段或莊家本人 → 回傳完整 `roundResult`（含 `hands.banker`）
+- 其他玩家在 BETTING/DEALING/SQUEEZING → `hands.banker = null`（資料層隔離，非 UI 隱藏）
+- 無真人莊家時維持原本廣播邏輯
+
+**前端牌面顯示** (`app.js`):
+- `setPlayerContext(iAmBanker, bettedZones)` 由 GameUI 在 DEALING phase 發牌前呼叫
+- 莊家本人：前4張發牌動畫完成後直接翻面（`flipCard`），第5張保留咪牌入口
+- 非莊家玩家：`targetHands.banker = null`，莊家區發牌動畫僅顯示牌背（不崩潰）
+- `updateBankerHand(bankerCards)` — RESULT phase 時由 GameUI 呼叫，補充非莊家玩家的莊家牌資料，使 `openBankerAndSettle()` 能正確翻牌
+
+**下莊限制** (`backend/index.js`):
+- `quit_banker` socket event 加入 phase 判斷：`gameTable.phase !== 'BETTING'` 時回傳錯誤
+- 僅 BETTING 階段可申請下莊，防止發牌中途或結算中途離場造成狀態混亂
+
 ### Hand Types & Multipliers (`backend/logic.js`)
 
 | 牌型 | 條件 | 倍率 |
