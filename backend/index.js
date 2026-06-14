@@ -494,7 +494,7 @@ app.get('/api/admin/preview', adminAuth, (req, res) => {
     ['tian','di','xuan','huang'].forEach(z => {
         const bet = tableBets[z] || 0;
         if (winners[z]) theoreticalPnl -= Math.floor(bet * (results[z]?.multiplier || 1) * 0.95);
-        else            theoreticalPnl += bet;
+        else            theoreticalPnl += Math.floor(bet * (results.banker?.multiplier || 1));
     });
 
     res.json({

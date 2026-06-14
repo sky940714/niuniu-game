@@ -116,11 +116,12 @@ const BetRecordService = {
             SELECT
                 settled_at,
                 banker_type, banker_cards,
-                COUNT(*)                           AS player_count,
-                CAST(SUM(bet_total)  AS SIGNED)    AS total_bets,
-                CAST(SUM(win_amount) AS SIGNED)     AS total_win,
-                CAST(SUM(bet_total) - SUM(win_amount) AS SIGNED) AS house_profit
+                COUNT(*)                              AS player_count,
+                CAST(SUM(bet_total)    AS SIGNED)     AS total_bets,
+                CAST(SUM(win_amount)   AS SIGNED)     AS total_win,
+                CAST(-SUM(net)         AS SIGNED)     AS house_profit
             FROM bet_records
+            WHERE COALESCE(is_banker_record, 0) = 0
             GROUP BY settled_at, banker_type, banker_cards
             ORDER BY settled_at DESC
             LIMIT ${safeLimit}
